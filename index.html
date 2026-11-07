@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Xodimlar Oylik Hisobi</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <meta name="theme-color" content="#4f46e5">
+</head>
+<body>
+
+  <div class="app-container">
+    <!-- Yuqori Sarlavha -->
+    <header class="app-header">
+      <h1 id="header-title"><i class="fa-solid fa-users"></i> Xodimlar</h1>
+    </header>
+
+    <!-- Asosiy Kontent Qismi (Tablar) -->
+    <main class="app-content">
+      
+      <!-- 1. XODIMLAR BO'LIMI -->
+      <section id="tab-employees" class="tab-pane active">
+        <button class="btn primary-gradient mb-15" onclick="openEmpModal()">
+          <i class="fa-solid fa-user-plus"></i> Yangi Xodim Qo'shish
+        </button>
+        <div id="employee-list" class="card-list"></div>
+      </section>
+
+      <!-- 2. KELDI-KETDI (DAVOMAT) BO'LIMI -->
+      <section id="tab-attendance" class="tab-pane">
+        <div class="filter-card mb-15">
+          <div class="form-group mb-10">
+            <label><i class="fa-regular fa-calendar"></i> Sanani tanlang</label>
+            <input type="date" id="attendance-date" onchange="renderAttendance()">
+          </div>
+          <div class="form-group mb-0">
+            <label><i class="fa-solid fa-filter"></i> Xodim bo'yicha filter</label>
+            <select id="attendance-filter-emp" onchange="renderAttendance()">
+              <option value="all">Barcha xodimlar</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="attendance-list" class="card-list"></div>
+      </section>
+
+      <!-- 3. PUL BERISH / OYLIK HISOBLASH BO'LIMI -->
+      <section id="tab-money" class="tab-pane">
+        <div class="form-card">
+          <h2><i class="fa-solid fa-wallet"></i> Pul berish va Hisob-kitob</h2>
+          <form id="money-form" onsubmit="handleMoneySubmit(event)">
+            <div class="form-group">
+              <label>Xodimni tanlang</label>
+              <select id="money-emp-id" required onchange="updateMoneyCalcPreview()">
+                <option value="">-- Xodimni tanlang --</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Amaliyot turi</label>
+              <select id="money-type" required onchange="toggleMoneyInputs()">
+                <option value="advance">Avans (Faqat pul berish)</option>
+                <option value="salary">Oylik hisoblash va yopish</option>
+              </select>
+            </div>
+
+            <div class="form-group" id="advance-input-group">
+              <label>Avans summasi (so'm)</label>
+              <input type="number" id="adv-amount" placeholder="Masalan: 50000" min="0">
+            </div>
+
+            <div id="salary-calc-preview" class="calc-preview" style="display: none;"></div>
+
+            <div class="form-group">
+              <label>Izoh (ixtiyoriy)</label>
+              <input type="text" id="money-note" placeholder="Masalan: Naqd pulda berildi">
+            </div>
+
+            <button type="submit" class="btn success-gradient">
+              <i class="fa-solid fa-check"></i> Saqlash
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- 4. TARIX BO'LIMI -->
+      <section id="tab-history" class="tab-pane">
+        <div class="history-header">
+          <p class="section-desc">So'nggi amaliyotlar tarixi:</p>
+          <button class="btn-sm danger" onclick="clearAllHistory()"><i class="fa-solid fa-trash-can"></i> Tozalash</button>
+        </div>
+        <div id="history-list" class="card-list"></div>
+      </section>
+
+    </main>
+
+    <!-- Pastki Navigatsiya Paneli -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" onclick="switchTab('employees', this)">
+        <i class="fa-solid fa-users"></i>
+        <span>Xodimlar</span>
+      </button>
+      <button class="nav-item" onclick="switchTab('attendance', this)">
+        <i class="fa-solid fa-calendar-check"></i>
+        <span>Keldi-ketdi</span>
+      </button>
+      <button class="nav-item" onclick="switchTab('money', this)">
+        <i class="fa-solid fa-hand-holding-dollar"></i>
+        <span>Pul berish</span>
+      </button>
+      <button class="nav-item" onclick="switchTab('history', this)">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        <span>Tarix</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- MODAL: Xodim kalendar oynasi -->
+  <div id="calendar-modal" class="modal">
+    <div class="modal-content calendar-modal-content">
+      <div class="modal-header">
+        <h3 id="cal-emp-title">Xodim Davomati</h3>
+        <button class="close-btn" onclick="closeCalendarModal()">&times;</button>
+      </div>
+      <div class="calendar-nav-bar">
+        <button class="btn-sm secondary" onclick="changeMonth(-1)"><i class="fa-solid fa-chevron-left"></i> Oldingi</button>
+        <span id="cal-month-year-label" style="font-weight: 600;"></span>
+        <button class="btn-sm secondary" onclick="changeMonth(1)">Keyingi <i class="fa-solid fa-chevron-right"></i></button>
+      </div>
+      <div class="calendar-legend">
+        <span><span class="dot green"></span> Keldi (1)</span>
+        <span><span class="dot orange"></span> Yarim (0.5)</span>
+        <span><span class="dot red"></span> Kelmadi (0)</span>
+      </div>
+      <div class="calendar-grid-header">
+        <div>Du</div><div>Se</div><div>Ch</div><div>Pa</div><div>Ju</div><div>Sh</div><div>Ya</div>
+      </div>
+      <div id="calendar-days-grid" class="calendar-days-grid"></div>
+      <div class="modal-actions" style="margin-top: 15px;">
+        <button type="button" class="btn secondary" onclick="closeCalendarModal()">Yopish</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: Xodim qo'shish / tahrirlash -->
+  <div id="emp-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="emp-modal-title">Yangi Xodim Qo'shish</h3>
+        <button class="close-btn" onclick="closeEmpModal()">&times;</button>
+      </div>
+      <form id="emp-form" onsubmit="saveEmployee(event)">
+        <input type="hidden" id="edit-emp-id">
+        <div class="form-group">
+          <label>Xodim ismi va familiyasi</label>
+          <input type="text" id="emp-name" placeholder="Masalan: Anvar Toshmatov" required>
+        </div>
+        <div class="form-group">
+          <label>Maosh turi</label>
+          <select id="emp-type" required>
+            <option value="daily">Kunlik maosh</option>
+            <option value="monthly">Oylik maosh</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Summa (so'm)</label>
+          <input type="number" id="emp-rate" placeholder="Masalan: 200000" required min="0">
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn secondary" onclick="closeEmpModal()">Bekor qilish</button>
+          <button type="submit" class="btn primary-gradient">Saqlash</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Tarix yozuvini tahrirlash -->
+  <div id="history-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Amaliyotni Tahrirlash</h3>
+        <button class="close-btn" onclick="closeHistoryModal()">&times;</button>
+      </div>
+      <form id="history-edit-form" onsubmit="saveHistoryEdit(event)">
+        <input type="hidden" id="edit-hist-id">
+        <div class="form-group">
+          <label>Summa (so'm)</label>
+          <input type="number" id="edit-hist-amount" required>
+        </div>
+        <div class="form-group">
+          <label>Izoh</label>
+          <input type="text" id="edit-hist-note" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn secondary" onclick="closeHistoryModal()">Bekor qilish</button>
+          <button type="submit" class="btn primary-gradient">Yangilash</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
