@@ -12,7 +12,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// 🔒 O'CHIRISH UCHUN PAROL (O'zingiz xohlagan parolga o'zgartirishingiz mumkin)
+// 🔒 O'CHIRISH UCHUN PAROL
 const DELETE_PASSWORD = "1234";
 
 let employees = [];
@@ -47,15 +47,11 @@ function saveDataToFirebase() {
   });
 }
 
-// 🔒 PAROL TEKSHIRISH FUNKSIYASI
 function verifyPassword() {
   const enteredPassword = prompt("⚠️ O'chirish uchun parolni kiriting:");
-  if (enteredPassword === null) {
-    return false; // Bekor qilindi
-  }
-  if (enteredPassword === DELETE_PASSWORD) {
-    return true; // Parol to'g'ri
-  } else {
+  if (enteredPassword === null) return false;
+  if (enteredPassword === DELETE_PASSWORD) return true;
+  else {
     alert("❌ Parol noto'g'ri! O'chirish bekor qilindi.");
     return false;
   }
@@ -131,9 +127,8 @@ function saveEmployee(e) {
   saveDataToFirebase();
 }
 
-// 🔒 Xodimni o'chirishda parol so'rash
 function deleteEmployee(id) {
-  if (!verifyPassword()) return; // Parol noto'g'ri bo'lsa to'xtaydi
+  if (!verifyPassword()) return;
 
   if (confirm("Haqiqatan ham bu xodimni o'chirmoqchimisiz?")) {
     employees = employees.filter(e => e.id !== id);
@@ -394,19 +389,27 @@ function saveHistoryEdit(e) {
   closeHistoryModal();
 }
 
-// 🔒 Tarixdagi amaliyotni o'chirishda parol so'rash
+// 🔒 Tarix yozuvi o'chirilganda avansni ham xodim balansidan ayirib tashlash
 function deleteHistoryItem(id) {
-  if (!verifyPassword()) return; // Parol noto'g'ri bo'lsa to'xtaydi
+  if (!verifyPassword()) return;
 
   if (confirm("Bu tarix yozuvini o'chirmoqchimisiz?")) {
+    const item = historyList.find(h => h.id === id);
+    if (item && item.empId) {
+      const emp = employees.find(e => e.id === item.empId);
+      // Agar o'chirilayotgan tarix avans berishga tegishli bo'lsa, xodimning takenMoney'sidan ayiramiz
+      if (emp && item.title.includes("Avans berildi")) {
+        emp.takenMoney = Math.max(0, emp.takenMoney - item.amount);
+      }
+    }
+
     historyList = historyList.filter(h => h.id !== id);
     saveDataToFirebase();
   }
 }
 
-// 🔒 Barcha tarixni tozalashda parol so'rash
 function clearAllHistory() {
-  if (!verifyPassword()) return; // Parol noto'g'ri bo'lsa to'xtaydi
+  if (!verifyPassword()) return;
 
   if (confirm("Barcha tarix tozalanadimi?")) {
     historyList = [];
