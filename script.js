@@ -12,6 +12,9 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+// 🔒 O'CHIRISH UCHUN PAROL (O'zingiz xohlagan parolga o'zgartirishingiz mumkin)
+const DELETE_PASSWORD = "1234";
+
 let employees = [];
 let historyList = [];
 let attendanceRecords = {};
@@ -21,7 +24,7 @@ let activeCalendarEmpId = null;
 
 document.getElementById('attendance-date').valueAsDate = new Date();
 
-// Firebase'dan ma'lumotlarni real vaqtda (realtime) o'qib turish
+// Firebase'dan ma'lumotlarni real vaqtda o'qib turish
 db.collection("appData").doc("mainData").onSnapshot((doc) => {
   if (doc.exists) {
     const data = doc.data();
@@ -30,12 +33,10 @@ db.collection("appData").doc("mainData").onSnapshot((doc) => {
     attendanceRecords = data.attendanceRecords || {};
     renderAll();
   } else {
-    // Agar baza bo'sh bo'lsa boshlang'ich ma'lumot yozish
     saveDataToFirebase();
   }
 });
 
-// Ma'lumotlarni Firebase'ga saqlash funksiyasi
 function saveDataToFirebase() {
   db.collection("appData").doc("mainData").set({
     employees: employees,
@@ -44,6 +45,20 @@ function saveDataToFirebase() {
   }).catch((error) => {
     console.error("Xatolik yuz berdi: ", error);
   });
+}
+
+// 🔒 PAROL TEKSHIRISH FUNKSIYASI
+function verifyPassword() {
+  const enteredPassword = prompt("⚠️ O'chirish uchun parolni kiriting:");
+  if (enteredPassword === null) {
+    return false; // Bekor qilindi
+  }
+  if (enteredPassword === DELETE_PASSWORD) {
+    return true; // Parol to'g'ri
+  } else {
+    alert("❌ Parol noto'g'ri! O'chirish bekor qilindi.");
+    return false;
+  }
 }
 
 function switchTab(tabId, btnElement) {
@@ -116,7 +131,10 @@ function saveEmployee(e) {
   saveDataToFirebase();
 }
 
+// 🔒 Xodimni o'chirishda parol so'rash
 function deleteEmployee(id) {
+  if (!verifyPassword()) return; // Parol noto'g'ri bo'lsa to'xtaydi
+
   if (confirm("Haqiqatan ham bu xodimni o'chirmoqchimisiz?")) {
     employees = employees.filter(e => e.id !== id);
     saveDataToFirebase();
@@ -376,14 +394,20 @@ function saveHistoryEdit(e) {
   closeHistoryModal();
 }
 
+// 🔒 Tarixdagi amaliyotni o'chirishda parol so'rash
 function deleteHistoryItem(id) {
+  if (!verifyPassword()) return; // Parol noto'g'ri bo'lsa to'xtaydi
+
   if (confirm("Bu tarix yozuvini o'chirmoqchimisiz?")) {
     historyList = historyList.filter(h => h.id !== id);
     saveDataToFirebase();
   }
 }
 
+// 🔒 Barcha tarixni tozalashda parol so'rash
 function clearAllHistory() {
+  if (!verifyPassword()) return; // Parol noto'g'ri bo'lsa to'xtaydi
+
   if (confirm("Barcha tarix tozalanadimi?")) {
     historyList = [];
     saveDataToFirebase();
@@ -451,11 +475,8 @@ function renderAttendance() {
     const status = dateRecords[emp.id];
     let statusText = 'Belgilanmagan';
     if (status === 1) statusText = 'To\'liq kun';
-    else if (status === 0.5) statusText.value = 'Yarim kun';
+    else if (status === 0.5) statusText = 'Yarim kun';
     else if (status === 0) statusText = 'Kelmagan';
-
-    // Xatolik oldini olish uchun statusText to'g'rilandi:
-    if (status === 0.5) statusText = 'Yarim kun';
 
     list.innerHTML += `
       <div class="employee-card">
