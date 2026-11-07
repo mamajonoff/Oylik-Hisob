@@ -1,12 +1,50 @@
-let employees = JSON.parse(localStorage.getItem('employees')) || [];
-let historyList = JSON.parse(localStorage.getItem('historyList')) || [];
-let attendanceRecords = JSON.parse(localStorage.getItem('attendanceRecords')) || {};
+// O'zingizning Firebase kalitlaringizni bu yerga yozing:
+const firebaseConfig = {
+  apiKey: "AIzaSyCqEWxMnmpE9AQ3s1b1IxYbRDrzJN5Vi2A",
+  authDomain: "oylik-hisob-9bbb7.firebaseapp.com",
+  projectId: "oylik-hisob-9bbb7",
+  storageBucket: "oylik-hisob-9bbb7.firebasestorage.app",
+  messagingSenderId: "1044164936185",
+  appId: "1:1044164936185:web:e1bf968eaae60099127d28",
+  measurementId: "G-XS4SNG1C3W"
+};
 
-// Kalendar uchun joriy ko'rsatilayotgan yil va oy
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+let employees = [];
+let historyList = [];
+let attendanceRecords = {};
+
 let calCurrentDate = new Date();
 let activeCalendarEmpId = null;
 
 document.getElementById('attendance-date').valueAsDate = new Date();
+
+// Firebase'dan ma'lumotlarni real vaqtda (realtime) o'qib turish
+db.collection("appData").doc("mainData").onSnapshot((doc) => {
+  if (doc.exists) {
+    const data = doc.data();
+    employees = data.employees || [];
+    historyList = data.historyList || [];
+    attendanceRecords = data.attendanceRecords || {};
+    renderAll();
+  } else {
+    // Agar baza bo'sh bo'lsa boshlang'ich ma'lumot yozish
+    saveDataToFirebase();
+  }
+});
+
+// Ma'lumotlarni Firebase'ga saqlash funksiyasi
+function saveDataToFirebase() {
+  db.collection("appData").doc("mainData").set({
+    employees: employees,
+    historyList: historyList,
+    attendanceRecords: attendanceRecords
+  }).catch((error) => {
+    console.error("Xatolik yuz berdi: ", error);
+  });
+}
 
 function switchTab(tabId, btnElement) {
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
@@ -29,13 +67,6 @@ function switchTab(tabId, btnElement) {
     populateAttendanceFilter();
     renderAttendance();
   }
-}
-
-function saveData() {
-  localStorage.setItem('employees', JSON.stringify(employees));
-  localStorage.setItem('historyList', JSON.stringify(historyList));
-  localStorage.setItem('attendanceRecords', JSON.stringify(attendanceRecords));
-  renderAll();
 }
 
 function openEmpModal(id = null) {
@@ -67,9 +98,11 @@ function saveEmployee(e) {
 
   if (id) {
     const emp = employees.find(e => e.id == id);
-    emp.name = name;
-    emp.type = type;
-    emp.rate = rate;
+    if(emp) {
+      emp.name = name;
+      emp.type = type;
+      emp.rate = rate;
+    }
   } else {
     employees.push({
       id: Date.now(),
@@ -80,20 +113,19 @@ function saveEmployee(e) {
     });
   }
   closeEmpModal();
-  saveData();
+  saveDataToFirebase();
 }
 
 function deleteEmployee(id) {
   if (confirm("Haqiqatan ham bu xodimni o'chirmoqchimisiz?")) {
     employees = employees.filter(e => e.id !== id);
-    saveData();
+    saveDataToFirebase();
   }
 }
 
-// Xodim kartasiga bosganda kalendarni ochish
 function openEmployeeCalendar(empId) {
   activeCalendarEmpId = empId;
-  calCurrentDate = new Date(); // Joriy oyga o'rnatish
+  calCurrentDate = new Date();
   renderCalendarModal();
   document.getElementById('calendar-modal').classList.add('active');
 }
@@ -123,27 +155,22 @@ function renderCalendarModal() {
   const grid = document.getElementById('calendar-days-grid');
   grid.innerHTML = '';
 
-  // Oylarning birinchi kuni haftaning qaysi kuniga to'g'ri kelishini topish (0 - yakshanba, 1 - dushanba...)
   let firstDayIndex = new Date(year, month, 1).getDay();
-  // Dushanbadan boshlash uchun to'g'rilash (0 -> 6, 1 -> 0 ...)
   firstDayIndex = (firstDayIndex === 0) ? 6 : firstDayIndex - 1;
 
   const totalDays = new Date(year, month + 1, 0).getDate();
 
-  // Bo'sh kataklar (oy boshigacha)
   for (let i = 0; i < firstDayIndex; i++) {
     const emptyCell = document.createElement('div');
     emptyCell.className = 'cal-day-cell empty';
     grid.appendChild(emptyCell);
   }
 
-  // Kunlar
   for (let day = 1; day <= totalDays; day++) {
     const cell = document.createElement('div');
     cell.className = 'cal-day-cell';
     cell.innerText = day;
 
-    // Sanani YYYY-MM-DD formatga keltirish
     const mm = String(month + 1).padStart(2, '0');
     const dd = String(day).padStart(2, '0');
     const dateStr = `${year}-${mm}-${dd}`;
@@ -152,14 +179,11 @@ function renderCalendarModal() {
     const status = dateRecords[emp.id];
 
     if (status === 1) {
-      cell.classList.add('status-green'); // Kelgan (Yashil)
-      cell.title = "To'liq kun ishlagan";
+      cell.classList.add('status-green');
     } else if (status === 0.5) {
-      cell.classList.add('status-orange'); // Yarim kun (Sabzirang)
-      cell.title = "Yarim kun ishlagan";
+      cell.classList.add('status-orange');
     } else if (status === 0) {
-      cell.classList.add('status-red'); // Kelmagan (Qizil)
-      cell.title = "Kelmagan";
+      cell.classList.add('status-red');
     }
 
     grid.appendChild(cell);
@@ -190,7 +214,7 @@ function setAttendanceStatus(empId, status) {
     attendanceRecords[selectedDate][empId] = status;
   }
 
-  saveData();
+  saveDataToFirebase();
 }
 
 function calculateDaysWorked(empId) {
@@ -319,7 +343,7 @@ function handleMoneySubmit(e) {
 
   document.getElementById('money-form').reset();
   document.getElementById('salary-calc-preview').style.display = 'none';
-  saveData();
+  saveDataToFirebase();
   switchTab('history', document.querySelectorAll('.nav-item')[3]);
 }
 
@@ -347,7 +371,7 @@ function saveHistoryEdit(e) {
   if (item) {
     item.amount = amount;
     item.note = note;
-    saveData();
+    saveDataToFirebase();
   }
   closeHistoryModal();
 }
@@ -355,14 +379,14 @@ function saveHistoryEdit(e) {
 function deleteHistoryItem(id) {
   if (confirm("Bu tarix yozuvini o'chirmoqchimisiz?")) {
     historyList = historyList.filter(h => h.id !== id);
-    saveData();
+    saveDataToFirebase();
   }
 }
 
 function clearAllHistory() {
   if (confirm("Barcha tarix tozalanadimi?")) {
     historyList = [];
-    saveData();
+    saveDataToFirebase();
   }
 }
 
@@ -427,8 +451,11 @@ function renderAttendance() {
     const status = dateRecords[emp.id];
     let statusText = 'Belgilanmagan';
     if (status === 1) statusText = 'To\'liq kun';
-    else if (status === 0.5) statusText = 'Yarim kun';
+    else if (status === 0.5) statusText.value = 'Yarim kun';
     else if (status === 0) statusText = 'Kelmagan';
+
+    // Xatolik oldini olish uchun statusText to'g'rilandi:
+    if (status === 0.5) statusText = 'Yarim kun';
 
     list.innerHTML += `
       <div class="employee-card">
@@ -482,5 +509,3 @@ function renderHistory() {
     `;
   });
 }
-
-renderAll();
