@@ -12,7 +12,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// 🔒 O'chirish uchun xavfsizlik paroli (istalgancha o'zgartirishingiz mumkin)
+// 🔒 O'chirish uchun xavfsizlik paroli
 const DELETE_PASSWORD = "1234";
 
 let employees = [];
@@ -156,6 +156,7 @@ function changeMonth(direction) {
   renderCalendarModal();
 }
 
+// Kalendarda tanlangan oy bo'yicha davomatni ko'rsatish
 function renderCalendarModal() {
   const emp = employees.find(e => e.id === activeCalendarEmpId);
   if (!emp) return;
@@ -244,6 +245,7 @@ function setAttendanceStatus(empId, status) {
   saveDataToFirebase();
 }
 
+// Xodimning joriy oydagi ishlagan kunlarini to'g'ri hisoblash
 function calculateDaysWorked(empId) {
   let totalDays = 0;
   const now = new Date();
