@@ -1,4 +1,4 @@
-// O'zingizning Firebase kalitlaringizni bu yerga yozing:
+// Firebase sozlamalari
 const firebaseConfig = {
   apiKey: "AIzaSyCqEWxMnmpE9AQ3s1b1IxYbRDrzJN5Vi2A",
   authDomain: "oylik-hisob-9bbb7.firebaseapp.com",
@@ -12,7 +12,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// 🔒 O'CHIRISH UCHUN PAROL
+// 🔒 O'chirish uchun xavfsizlik paroli (istalgancha o'zgartirishingiz mumkin)
 const DELETE_PASSWORD = "1234";
 
 let employees = [];
@@ -24,7 +24,7 @@ let activeCalendarEmpId = null;
 
 document.getElementById('attendance-date').valueAsDate = new Date();
 
-// Firebase'dan ma'lumotlarni real vaqtda o'qib turish
+// Real vaqtda Firebase'dan ma'lumotlarni olish
 db.collection("appData").doc("mainData").onSnapshot((doc) => {
   if (doc.exists) {
     const data = doc.data();
@@ -77,6 +77,9 @@ function switchTab(tabId, btnElement) {
   } else if(tabId === 'attendance') {
     populateAttendanceFilter();
     renderAttendance();
+  } else if(tabId === 'history') {
+    populateHistoryFilter();
+    renderHistory();
   }
 }
 
@@ -213,6 +216,17 @@ function populateAttendanceFilter() {
   select.value = currentVal || 'all';
 }
 
+function populateHistoryFilter() {
+  const select = document.getElementById('history-filter-emp');
+  if(!select) return;
+  const currentVal = select.value;
+  select.innerHTML = '<option value="all">Barcha xodimlar tarixi</option>';
+  employees.forEach(emp => {
+    select.innerHTML += `<option value="${emp.id}">${emp.name}</option>`;
+  });
+  select.value = currentVal || 'all';
+}
+
 function setAttendanceStatus(empId, status) {
   const selectedDate = document.getElementById('attendance-date').value;
   if (!selectedDate) return alert("Iltimos, sanani tanlang!");
@@ -232,9 +246,15 @@ function setAttendanceStatus(empId, status) {
 
 function calculateDaysWorked(empId) {
   let totalDays = 0;
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+
   for (let date in attendanceRecords) {
-    if (attendanceRecords[date][empId] !== undefined) {
-      totalDays += attendanceRecords[date][empId];
+    if (date.startsWith(`${currentYear}-${currentMonth}`)) {
+      if (attendanceRecords[date][empId] !== undefined) {
+        totalDays += attendanceRecords[date][empId];
+      }
     }
   }
   return totalDays;
@@ -281,7 +301,7 @@ function updateMoneyCalcPreview() {
   if (emp.type === 'daily') {
     let gross = daysWorked * emp.rate;
     calculatedSalary = gross - emp.takenMoney;
-    detailsText = `Ishlagan kunlari: <strong>${daysWorked} kun</strong><br>
+    detailsText = `Joriy oydagi ishlagan kunlari: <strong>${daysWorked} kun</strong><br>
                    Hisoblangan: ${gross.toLocaleString()} so'm (${daysWorked} × ${emp.rate.toLocaleString()})<br>
                    Oldindan olingan summa (Avans): <strong style="color:red;">${emp.takenMoney.toLocaleString()} so'm</strong>`;
   } else {
@@ -337,12 +357,6 @@ function handleMoneySubmit(e) {
     historyTitle = `Oylik yopildi: ${emp.name}`;
     
     emp.takenMoney = 0;
-
-    for (let date in attendanceRecords) {
-      if (attendanceRecords[date][emp.id] !== undefined) {
-        delete attendanceRecords[date][emp.id];
-      }
-    }
   }
 
   historyList.unshift({
@@ -389,7 +403,6 @@ function saveHistoryEdit(e) {
   closeHistoryModal();
 }
 
-// 🔒 Tarix yozuvi o'chirilganda avansni ham xodim balansidan ayirib tashlash
 function deleteHistoryItem(id) {
   if (!verifyPassword()) return;
 
@@ -397,7 +410,6 @@ function deleteHistoryItem(id) {
     const item = historyList.find(h => h.id === id);
     if (item && item.empId) {
       const emp = employees.find(e => e.id === item.empId);
-      // Agar o'chirilayotgan tarix avans berishga tegishli bo'lsa, xodimning takenMoney'sidan ayiramiz
       if (emp && item.title.includes("Avans berildi")) {
         emp.takenMoney = Math.max(0, emp.takenMoney - item.amount);
       }
@@ -508,14 +520,20 @@ function renderAttendance() {
 
 function renderHistory() {
   const list = document.getElementById('history-list');
+  const filterEmpId = document.getElementById('history-filter-emp') ? document.getElementById('history-filter-emp').value : 'all';
   list.innerHTML = '';
 
-  if (historyList.length === 0) {
-    list.innerHTML = `<p class="section-desc" style="text-align:center; padding: 20px;">Hali amaliyotlar tarixi yo'q.</p>`;
+  let filteredHistory = historyList;
+  if (filterEmpId !== 'all') {
+    filteredHistory = historyList.filter(item => item.empId == filterEmpId);
+  }
+
+  if (filteredHistory.length === 0) {
+    list.innerHTML = `<p class="section-desc" style="text-align:center; padding: 20px;">Tarix yozuvlari topilmadi.</p>`;
     return;
   }
 
-  historyList.forEach(item => {
+  filteredHistory.forEach(item => {
     list.innerHTML += `
       <div class="history-card">
         <div class="history-info">
