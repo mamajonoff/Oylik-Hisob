@@ -123,7 +123,8 @@ function saveEmployee(e) {
       name,
       type,
       rate,
-      takenMoney: 0
+      takenMoney: 0,
+      lastSalaryDate: null // Oxirgi oylik yopilgan sana
     });
   }
   closeEmpModal();
@@ -156,7 +157,6 @@ function changeMonth(direction) {
   renderCalendarModal();
 }
 
-// Kalendarda tanlangan oy bo'yicha davomatni ko'rsatish
 function renderCalendarModal() {
   const emp = employees.find(e => e.id === activeCalendarEmpId);
   if (!emp) return;
@@ -245,17 +245,19 @@ function setAttendanceStatus(empId, status) {
   saveDataToFirebase();
 }
 
-// Xodimning joriy oydagi ishlagan kunlarini to'g'ri hisoblash
+// Oylik yopilgandan keyingi yangi ishlagan kunlarni hisoblash
 function calculateDaysWorked(empId) {
   let totalDays = 0;
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const emp = employees.find(e => e.id === empId);
+  const lastSalaryDateStr = emp && emp.lastSalaryDate ? emp.lastSalaryDate : "2000-01-01";
+  const lastSalaryDate = new Date(lastSalaryDateStr);
 
-  for (let date in attendanceRecords) {
-    if (date.startsWith(`${currentYear}-${currentMonth}`)) {
-      if (attendanceRecords[date][empId] !== undefined) {
-        totalDays += attendanceRecords[date][empId];
+  for (let dateStr in attendanceRecords) {
+    const recordDate = new Date(dateStr);
+    // Faqat oxirgi oylik yopilgan sanadan keyingi kunlarni hisoblaymiz
+    if (recordDate > lastSalaryDate) {
+      if (attendanceRecords[dateStr][empId] !== undefined) {
+        totalDays += attendanceRecords[dateStr][empId];
       }
     }
   }
@@ -303,7 +305,7 @@ function updateMoneyCalcPreview() {
   if (emp.type === 'daily') {
     let gross = daysWorked * emp.rate;
     calculatedSalary = gross - emp.takenMoney;
-    detailsText = `Joriy oydagi ishlagan kunlari: <strong>${daysWorked} kun</strong><br>
+    detailsText = `Hisob-kitobdagi ishlagan kunlari: <strong>${daysWorked} kun</strong><br>
                    Hisoblangan: ${gross.toLocaleString()} so'm (${daysWorked} × ${emp.rate.toLocaleString()})<br>
                    Oldindan olingan summa (Avans): <strong style="color:red;">${emp.takenMoney.toLocaleString()} so'm</strong>`;
   } else {
@@ -359,6 +361,8 @@ function handleMoneySubmit(e) {
     historyTitle = `Oylik yopildi: ${emp.name}`;
     
     emp.takenMoney = 0;
+    // Oylik yopilgan sanani bugungi kunga qo'shamiz, shunda keyingi safar faqat shu sanadan keyingi kunlar hisoblanadi
+    emp.lastSalaryDate = new Date().toISOString().split('T')[0];
   }
 
   historyList.unshift({
