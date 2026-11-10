@@ -12,7 +12,6 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// 🔒 O'chirish uchun xavfsizlik paroli
 const DELETE_PASSWORD = "1234";
 
 let employees = [];
@@ -23,6 +22,8 @@ let calCurrentDate = new Date();
 let activeCalendarEmpId = null;
 
 document.getElementById('attendance-date').valueAsDate = new Date();
+// Pul berish sanasini ham avtomatik bugunga qo'yamiz
+document.getElementById('money-date').valueAsDate = new Date();
 
 // Real vaqtda Firebase'dan ma'lumotlarni olish
 db.collection("appData").doc("mainData").onSnapshot((doc) => {
@@ -124,7 +125,7 @@ function saveEmployee(e) {
       type,
       rate,
       takenMoney: 0,
-      lastSalaryTimestamp: 0 // Oxirgi oylik yopilgan vaqt
+      lastSalaryDateStr: "" // Tanlangan oxirgi oylik yopilgan sana string formatda ("YYYY-MM-DD")
     });
   }
   closeEmpModal();
@@ -245,16 +246,19 @@ function setAttendanceStatus(empId, status) {
   saveDataToFirebase();
 }
 
-// Oylik yopilgandan keyingi yangi ishlagan kunlarni to'g'ri hisoblash
-function calculateDaysWorked(empId) {
+// Tanlangan oylik yopish sanasidan keyingi kunlarni hisoblash
+function calculateDaysWorked(empId, customEndDate = null) {
   let totalDays = 0;
   const emp = employees.find(e => e.id === empId);
-  const lastSalaryTimestamp = emp && emp.lastSalaryTimestamp ? emp.lastSalaryTimestamp : 0;
+  const lastDateStr = emp && emp.lastSalaryDateStr ? emp.lastSalaryDateStr : "2000-01-01";
+  
+  const lastDate = new Date(lastDateStr);
+  const endTime = customEndDate ? new Date(customEndDate).getTime() : new Date().getTime();
 
   for (let dateStr in attendanceRecords) {
-    // Sanani vaqt (timestamp) formatiga o'tkazib solishtiramiz
-    const recordTime = new Date(dateStr).getTime();
-    if (recordTime > lastSalaryTimestamp) {
+    const recordDate = new Date(dateStr);
+    // Oxirgi yopilgan sana bilan tanlangan oylik sanasi orasidagi kunlarni olamiz
+    if (recordDate > lastDate && recordDate.getTime() <= endTime) {
       if (attendanceRecords[dateStr][empId] !== undefined) {
         totalDays += attendanceRecords[dateStr][empId];
       }
@@ -290,6 +294,7 @@ function toggleMoneyInputs() {
 function updateMoneyCalcPreview() {
   const empId = document.getElementById('money-emp-id').value;
   const type = document.getElementById('money-type').value;
+  const moneyDate = document.getElementById('money-date').value;
   const preview = document.getElementById('salary-calc-preview');
 
   if (!empId || type !== 'salary') return;
@@ -297,14 +302,14 @@ function updateMoneyCalcPreview() {
   const emp = employees.find(e => e.id == empId);
   if (!emp) return;
 
-  const daysWorked = calculateDaysWorked(emp.id);
+  const daysWorked = calculateDaysWorked(emp.id, moneyDate);
   let calculatedSalary = 0;
   let detailsText = '';
 
   if (emp.type === 'daily') {
     let gross = daysWorked * emp.rate;
     calculatedSalary = gross - emp.takenMoney;
-    detailsText = `Hisob-kitobdagi ishlagan kunlari: <strong>${daysWorked} kun</strong><br>
+    detailsText = `Tanlangan sanagacha ishlagan kunlari: <strong>${daysWorked} kun</strong><br>
                    Hisoblangan: ${gross.toLocaleString()} so'm (${daysWorked} × ${emp.rate.toLocaleString()})<br>
                    Oldindan olingan summa (Avans): <strong style="color:red;">${emp.takenMoney.toLocaleString()} so'm</strong>`;
   } else {
@@ -332,6 +337,7 @@ function handleMoneySubmit(e) {
   e.preventDefault();
   const empId = document.getElementById('money-emp-id').value;
   const type = document.getElementById('money-type').value;
+  const moneyDate = document.getElementById('money-date').value;
   const note = document.getElementById('money-note').value;
 
   const emp = employees.find(e => e.id == empId);
@@ -347,7 +353,7 @@ function handleMoneySubmit(e) {
     emp.takenMoney += amountToAdd;
     historyTitle = `Avans berildi: ${emp.name}`;
   } else {
-    const daysWorked = calculateDaysWorked(emp.id);
+    const daysWorked = calculateDaysWorked(emp.id, moneyDate);
     let dailyRate = emp.type === 'daily' ? emp.rate : (emp.rate / 26);
     let gross = emp.type === 'daily' ? (daysWorked * emp.rate) : emp.rate;
     
@@ -360,8 +366,8 @@ function handleMoneySubmit(e) {
     historyTitle = `Oylik yopildi: ${emp.name}`;
     
     emp.takenMoney = 0;
-    // Oylik yopilgan aniq vaqtni saqlaymiz, shunda bugungi va kelgusi kunlar to'g'ri hisoblanadi
-    emp.lastSalaryTimestamp = Date.now();
+    // Oylik yopilgan sana sifatida formda tanlangan sana saqlanadi
+    emp.lastSalaryDateStr = moneyDate;
   }
 
   historyList.unshift({
@@ -370,10 +376,11 @@ function handleMoneySubmit(e) {
     title: historyTitle,
     amount: Math.round(amountToAdd),
     note: note || (type === 'advance' ? 'Avans' : 'Oylik yakuni'),
-    date: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})
+    date: new Date(moneyDate).toLocaleDateString() + ' (' + (type === 'advance' ? 'Avans' : 'Oylik') + ')'
   });
 
   document.getElementById('money-form').reset();
+  document.getElementById('money-date').valueAsDate = new Date();
   document.getElementById('salary-calc-preview').style.display = 'none';
   saveDataToFirebase();
   switchTab('history', document.querySelectorAll('.nav-item')[3]);
@@ -500,6 +507,7 @@ function renderAttendance() {
 
     list.innerHTML += `
       <div class="employee-card">
+        /div>
         <div class="emp-top">
           <span class="emp-name">${emp.name}</span>
           <span style="font-size: 0.85rem; color: var(--text-muted);">${emp.type === 'daily' ? 'Kunlik' : 'Oylik'}</span>
