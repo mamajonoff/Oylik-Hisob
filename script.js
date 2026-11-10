@@ -124,7 +124,7 @@ function saveEmployee(e) {
       type,
       rate,
       takenMoney: 0,
-      lastSalaryDate: null // Oxirgi oylik yopilgan sana
+      lastSalaryTimestamp: 0 // Oxirgi oylik yopilgan vaqt
     });
   }
   closeEmpModal();
@@ -245,17 +245,16 @@ function setAttendanceStatus(empId, status) {
   saveDataToFirebase();
 }
 
-// Oylik yopilgandan keyingi yangi ishlagan kunlarni hisoblash
+// Oylik yopilgandan keyingi yangi ishlagan kunlarni to'g'ri hisoblash
 function calculateDaysWorked(empId) {
   let totalDays = 0;
   const emp = employees.find(e => e.id === empId);
-  const lastSalaryDateStr = emp && emp.lastSalaryDate ? emp.lastSalaryDate : "2000-01-01";
-  const lastSalaryDate = new Date(lastSalaryDateStr);
+  const lastSalaryTimestamp = emp && emp.lastSalaryTimestamp ? emp.lastSalaryTimestamp : 0;
 
   for (let dateStr in attendanceRecords) {
-    const recordDate = new Date(dateStr);
-    // Faqat oxirgi oylik yopilgan sanadan keyingi kunlarni hisoblaymiz
-    if (recordDate > lastSalaryDate) {
+    // Sanani vaqt (timestamp) formatiga o'tkazib solishtiramiz
+    const recordTime = new Date(dateStr).getTime();
+    if (recordTime > lastSalaryTimestamp) {
       if (attendanceRecords[dateStr][empId] !== undefined) {
         totalDays += attendanceRecords[dateStr][empId];
       }
@@ -361,8 +360,8 @@ function handleMoneySubmit(e) {
     historyTitle = `Oylik yopildi: ${emp.name}`;
     
     emp.takenMoney = 0;
-    // Oylik yopilgan sanani bugungi kunga qo'shamiz, shunda keyingi safar faqat shu sanadan keyingi kunlar hisoblanadi
-    emp.lastSalaryDate = new Date().toISOString().split('T')[0];
+    // Oylik yopilgan aniq vaqtni saqlaymiz, shunda bugungi va kelgusi kunlar to'g'ri hisoblanadi
+    emp.lastSalaryTimestamp = Date.now();
   }
 
   historyList.unshift({
