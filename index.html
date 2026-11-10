@@ -69,6 +69,12 @@
               </select>
             </div>
 
+            <!-- Amaliyot sanasini tanlash (Kecha yoki bugunga moslash uchun) -->
+            <div class="form-group">
+              <label><i class="fa-regular fa-calendar"></i> Amaliyot sanasi</label>
+              <input type="date" id="money-date" required onchange="updateMoneyCalcPreview()">
+            </div>
+
             <div class="form-group" id="advance-input-group">
               <label>Avans summasi (so'm)</label>
               <input type="number" id="adv-amount" placeholder="Masalan: 50000" min="0">
