@@ -21,6 +21,18 @@ let attendanceRecords = {};
 
 let calCurrentDate = new Date();
 let activeCalendarEmpId = null;
+let erkinjonRestoredOnce = false;
+
+function toList(val) {
+  if (Array.isArray(val)) return val.filter(Boolean);
+  if (val && typeof val === "object") return Object.values(val).filter(Boolean);
+  return [];
+}
+
+function toMap(val) {
+  if (val && typeof val === "object" && !Array.isArray(val)) return val;
+  return {};
+}
 
 function getLocalDateStr(dateObj = new Date()) {
   const y = dateObj.getFullYear();
@@ -29,7 +41,7 @@ function getLocalDateStr(dateObj = new Date()) {
   return `${y}-${m}-${d}`;
 }
 
-(function ensureReturnMoneyOption() {
+function ensureReturnMoneyOption() {
   const typeSelect = document.getElementById('money-type');
   if (typeSelect && !typeSelect.querySelector('option[value="return"]')) {
     const opt = document.createElement('option');
@@ -37,13 +49,22 @@ function getLocalDateStr(dateObj = new Date()) {
     opt.textContent = 'Pul qaytarish (Avans qaytarish)';
     typeSelect.appendChild(opt);
   }
-})();
+}
 
-const attDateInput = document.getElementById('attendance-date');
-if (attDateInput && !attDateInput.value) attDateInput.value = getLocalDateStr();
+document.addEventListener("DOMContentLoaded", () => {
+  ensureReturnMoneyOption();
+  const attDateInput = document.getElementById('attendance-date');
+  if (attDateInput && !attDateInput.value) attDateInput.value = getLocalDateStr();
 
-const moneyDateInput = document.getElementById('money-date');
-if (moneyDateInput && !moneyDateInput.value) moneyDateInput.value = getLocalDateStr();
+  const moneyDateInput = document.getElementById('money-date');
+  if (moneyDateInput && !moneyDateInput.value) moneyDateInput.value = getLocalDateStr();
+});
+
+const attDateInit = document.getElementById('attendance-date');
+if (attDateInit && !attDateInit.value) attDateInit.value = getLocalDateStr();
+
+const moneyDateInit = document.getElementById('money-date');
+if (moneyDateInit && !moneyDateInit.value) moneyDateInit.value = getLocalDateStr();
 
 (function injectCalendarStyles() {
   const oldStyle = document.getElementById('custom-calendar-settled-style');
@@ -106,19 +127,56 @@ if (moneyDateInput && !moneyDateInput.value) moneyDateInput.value = getLocalDate
   document.head.appendChild(style);
 })();
 
-// Real vaqtda Firebase'dan ma'lumotlarni olish (mavjud ma'lumotlarni o'chirmasdan o'qish)
+function normalizeErkinjonState() {
+  if (erkinjonRestoredOnce) return false;
+  const erkinjon = employees.find(e => e.name && String(e.name).toLowerCase().trim().includes("erkinjon"));
+  if (!erkinjon) {
+    erkinjonRestoredOnce = true;
+    return false;
+  }
+
+  const hasErkinjonCloseInHistory = historyList.some(
+    h => (String(h.empId) === String(erkinjon.id) || (h.title && String(h.title).toLowerCase().includes("erkinjon"))) &&
+         h.title && String(h.title).toLowerCase().includes("oylik yopildi")
+  );
+
+  if (!hasErkinjonCloseInHistory && (!erkinjon.lastSalaryDateStr || erkinjon.lastSalaryDateStr !== "2026-11-19")) {
+    erkinjon.lastSalaryDateStr = "2026-11-19";
+    if (Array.isArray(erkinjon.closedDates)) {
+      erkinjon.closedDates = erkinjon.closedDates.filter(d => d <= "2026-11-19");
+      if (!erkinjon.closedDates.includes("2026-11-19")) {
+        erkinjon.closedDates.push("2026-11-19");
+      }
+    } else {
+      erkinjon.closedDates = ["2026-11-19"];
+    }
+    erkinjonRestoredOnce = true;
+    return true;
+  }
+
+  erkinjonRestoredOnce = true;
+  return false;
+}
+
+// Real vaqtda Firebase'dan ma'lumotlarni olish
 db.collection("appData").doc("mainData").onSnapshot((doc) => {
   if (doc.exists) {
     const data = doc.data() || {};
-    employees = Array.isArray(data.employees) ? data.employees : [];
-    historyList = Array.isArray(data.historyList) ? data.historyList : [];
-    attendanceRecords = (data.attendanceRecords && typeof data.attendanceRecords === 'object')
-      ? data.attendanceRecords
-      : {};
+    employees = toList(data.employees);
+    historyList = toList(data.historyList);
+    attendanceRecords = toMap(data.attendanceRecords);
+
+    const changed = normalizeErkinjonState();
+    renderAll();
+    if (changed) {
+      saveDataToFirebase();
+    }
+  } else {
     renderAll();
   }
 }, (error) => {
   console.error("Firebase o'qishda xatolik:", error);
+  renderAll();
 });
 
 function saveDataToFirebase() {
@@ -126,7 +184,7 @@ function saveDataToFirebase() {
     employees: employees,
     historyList: historyList,
     attendanceRecords: attendanceRecords
-  }, { merge: true }).catch((error) => {
+  }).catch((error) => {
     console.error("Xatolik yuz berdi: ", error);
   });
 }
@@ -368,7 +426,8 @@ function populateHistoryFilter() {
 }
 
 function setAttendanceStatus(empId, status) {
-  const selectedDate = document.getElementById('attendance-date').value;
+  const dateEl = document.getElementById('attendance-date');
+  const selectedDate = (dateEl && dateEl.value) ? dateEl.value : getLocalDateStr();
   if (!selectedDate) return alert("Iltimos, sanani tanlang!");
 
   if (!attendanceRecords[selectedDate]) {
@@ -413,6 +472,7 @@ function calculateDaysWorked(empId, customEndDate = null) {
 }
 
 function populateMoneySelect() {
+  ensureReturnMoneyOption();
   const select = document.getElementById('money-emp-id');
   if (!select) return;
   select.innerHTML = '<option value="">-- Xodimni tanlang --</option>';
@@ -423,6 +483,7 @@ function populateMoneySelect() {
 }
 
 function toggleMoneyInputs() {
+  ensureReturnMoneyOption();
   const typeEl = document.getElementById('money-type');
   if (!typeEl) return;
   const type = typeEl.value;
@@ -603,7 +664,7 @@ function deleteHistoryItem(id) {
     if (item) {
       const emp = employees.find(
         e => String(e.id) === String(item.empId) ||
-             (item.title && e.name && item.title.toLowerCase().includes(e.name.toLowerCase()))
+             (item.title && e.name && String(item.title).toLowerCase().includes(String(e.name).toLowerCase()))
       );
 
       if (emp) {
@@ -620,8 +681,8 @@ function deleteHistoryItem(id) {
 
           const remainingCloses = historyList
             .filter(h => String(h.id) !== String(id) &&
-                       (String(h.empId) === String(emp.id) || (h.title && h.title.toLowerCase().includes(emp.name.toLowerCase()))) &&
-                       ((h.type === 'salary') || (h.title && h.title.toLowerCase().includes("oylik yopildi"))) &&
+                       (String(h.empId) === String(emp.id) || (h.title && String(h.title).toLowerCase().includes(String(emp.name).toLowerCase()))) &&
+                       ((h.type === 'salary') || (h.title && String(h.title).toLowerCase().includes("oylik yopildi"))) &&
                        h.closedDate)
             .map(h => h.closedDate)
             .sort();
@@ -661,7 +722,8 @@ function renderAll() {
     renderEmployees();
     renderAttendance();
     renderHistory();
-    if (document.getElementById('calendar-modal').classList.contains('active')) {
+    const calModal = document.getElementById('calendar-modal');
+    if (calModal && calModal.classList.contains('active')) {
       renderCalendarModal();
     }
   } catch (err) {
