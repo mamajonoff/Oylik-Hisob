@@ -12,6 +12,7 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
+// 🔒 O'chirish uchun xavfsizlik paroli
 const DELETE_PASSWORD = "1234";
 
 let employees = [];
@@ -20,10 +21,111 @@ let attendanceRecords = {};
 
 let calCurrentDate = new Date();
 let activeCalendarEmpId = null;
+let erkinjonRestoredOnce = false;
 
-document.getElementById('attendance-date').valueAsDate = new Date();
-// Pul berish sanasini ham avtomatik bugunga qo'yamiz
-document.getElementById('money-date').valueAsDate = new Date();
+function getLocalDateStr(dateObj = new Date()) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+const attDateInput = document.getElementById('attendance-date');
+if (attDateInput && !attDateInput.value) attDateInput.value = getLocalDateStr();
+
+const moneyDateInput = document.getElementById('money-date');
+if (moneyDateInput && !moneyDateInput.value) moneyDateInput.value = getLocalDateStr();
+
+// Kalendarda hisob-kitob sanalari va yopilgan kunlarni ajratish uslublari
+(function injectCalendarStyles() {
+  const oldStyle = document.getElementById('custom-calendar-settled-style');
+  if (oldStyle) oldStyle.remove();
+
+  const style = document.createElement('style');
+  style.id = 'custom-calendar-settled-style';
+  style.textContent = `
+    .cal-day-cell {
+      position: relative;
+      transition: transform 0.12s ease;
+    }
+    .cal-day-cell.closed-period-day {
+      outline: 2px solid #4f46e5;
+      outline-offset: -2px;
+      opacity: 0.78;
+    }
+    .cal-day-cell.closed-cutoff-day {
+      background-color: #e0e7ff !important;
+      color: #1e1b4b !important;
+      font-weight: 700;
+      outline: 2px solid #3730a3;
+      outline-offset: -2px;
+      opacity: 1 !important;
+    }
+    .cal-day-cell.closed-cutoff-day::after {
+      content: "YOP";
+      position: absolute;
+      bottom: 1px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.52rem;
+      font-weight: 800;
+      letter-spacing: 0.3px;
+      color: #312e81;
+      line-height: 1;
+    }
+    .cal-summary-box {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-left: 4px solid #4f46e5;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.84rem;
+      margin-bottom: 10px;
+      line-height: 1.5;
+      color: #0f172a;
+    }
+    .cal-badge-demo {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: #e0e7ff;
+      border: 1px solid #3730a3;
+      color: #1e1b4b;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+  `;
+  document.head.appendChild(style);
+})();
+
+// Erkinjon uchun 19.11.2026 holatini tiklash tekshiruvi
+function normalizeErkinjonState() {
+  if (erkinjonRestoredOnce) return;
+  const erkinjon = employees.find(e => e.name && e.name.toLowerCase().trim().includes("erkinjon"));
+  if (!erkinjon) return;
+
+  const hasErkinjonCloseInHistory = historyList.some(
+    h => (String(h.empId) === String(erkinjon.id) || (h.title && h.title.toLowerCase().includes("erkinjon"))) &&
+         h.title && h.title.toLowerCase().includes("oylik yopildi")
+  );
+
+  // Agar Erkinjon bo'yicha oylik yopilish tarixi o'chirilgan bo'lsa yoki yopilish sanasi 2026-11-19 dan keyin bo'lsa, 2026-11-19 ga qaytaramiz
+  if (!hasErkinjonCloseInHistory && (!erkinjon.lastSalaryDateStr || erkinjon.lastSalaryDateStr !== "2026-11-19")) {
+    erkinjon.lastSalaryDateStr = "2026-11-19";
+    if (Array.isArray(erkinjon.closedDates)) {
+      erkinjon.closedDates = erkinjon.closedDates.filter(d => d <= "2026-11-19");
+      if (!erkinjon.closedDates.includes("2026-11-19")) {
+        erkinjon.closedDates.push("2026-11-19");
+      }
+    } else {
+      erkinjon.closedDates = ["2026-11-19"];
+    }
+    erkinjonRestoredOnce = true;
+    saveDataToFirebase();
+  } else {
+    erkinjonRestoredOnce = true;
+  }
+}
 
 // Real vaqtda Firebase'dan ma'lumotlarni olish
 db.collection("appData").doc("mainData").onSnapshot((doc) => {
@@ -32,6 +134,7 @@ db.collection("appData").doc("mainData").onSnapshot((doc) => {
     employees = data.employees || [];
     historyList = data.historyList || [];
     attendanceRecords = data.attendanceRecords || {};
+    normalizeErkinjonState();
     renderAll();
   } else {
     saveDataToFirebase();
@@ -61,9 +164,9 @@ function verifyPassword() {
 function switchTab(tabId, btnElement) {
   document.querySelectorAll('.tab-pane').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  
+
   document.getElementById(`tab-${tabId}`).classList.add('active');
-  btnElement.classList.add('active');
+  if (btnElement) btnElement.classList.add('active');
 
   const titles = {
     'employees': '<i class="fa-solid fa-users"></i> Xodimlar',
@@ -73,12 +176,12 @@ function switchTab(tabId, btnElement) {
   };
   document.getElementById('header-title').innerHTML = titles[tabId];
 
-  if(tabId === 'money') {
+  if (tabId === 'money') {
     populateMoneySelect();
-  } else if(tabId === 'attendance') {
+  } else if (tabId === 'attendance') {
     populateAttendanceFilter();
     renderAttendance();
-  } else if(tabId === 'history') {
+  } else if (tabId === 'history') {
     populateHistoryFilter();
     renderHistory();
   }
@@ -88,7 +191,7 @@ function openEmpModal(id = null) {
   document.getElementById('emp-modal').classList.add('active');
   if (id) {
     document.getElementById('emp-modal-title').innerText = "Xodimni Tahrirlash";
-    const emp = employees.find(e => e.id === id);
+    const emp = employees.find(e => String(e.id) === String(id));
     document.getElementById('edit-emp-id').value = emp.id;
     document.getElementById('emp-name').value = emp.name;
     document.getElementById('emp-type').value = emp.type;
@@ -112,8 +215,8 @@ function saveEmployee(e) {
   const rate = parseFloat(document.getElementById('emp-rate').value);
 
   if (id) {
-    const emp = employees.find(e => e.id == id);
-    if(emp) {
+    const emp = employees.find(e => String(e.id) === String(id));
+    if (emp) {
       emp.name = name;
       emp.type = type;
       emp.rate = rate;
@@ -125,7 +228,8 @@ function saveEmployee(e) {
       type,
       rate,
       takenMoney: 0,
-      lastSalaryDateStr: "" // Tanlangan oxirgi oylik yopilgan sana string formatda ("YYYY-MM-DD")
+      lastSalaryDateStr: "",
+      closedDates: []
     });
   }
   closeEmpModal();
@@ -136,14 +240,27 @@ function deleteEmployee(id) {
   if (!verifyPassword()) return;
 
   if (confirm("Haqiqatan ham bu xodimni o'chirmoqchimisiz?")) {
-    employees = employees.filter(e => e.id !== id);
+    employees = employees.filter(e => String(e.id) !== String(id));
     saveDataToFirebase();
   }
 }
 
 function openEmployeeCalendar(empId) {
   activeCalendarEmpId = empId;
-  calCurrentDate = new Date();
+  const emp = employees.find(e => String(e.id) === String(empId));
+
+  // Agar xodimning oxirgi yopilgan sanasi bo'lsa, kalendarni o'sha oyga ochish qulay bo'ladi (yoki joriy oyga)
+  if (emp && emp.lastSalaryDateStr) {
+    const parts = emp.lastSalaryDateStr.split('-');
+    if (parts.length === 3) {
+      calCurrentDate = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
+    } else {
+      calCurrentDate = new Date();
+    }
+  } else {
+    calCurrentDate = new Date();
+  }
+
   renderCalendarModal();
   document.getElementById('calendar-modal').classList.add('active');
 }
@@ -159,15 +276,45 @@ function changeMonth(direction) {
 }
 
 function renderCalendarModal() {
-  const emp = employees.find(e => e.id === activeCalendarEmpId);
+  const emp = employees.find(e => String(e.id) === String(activeCalendarEmpId));
   if (!emp) return;
 
   document.getElementById('cal-emp-title').innerText = `${emp.name} — Davomati`;
 
+  const legendEl = document.querySelector('#calendar-modal .calendar-legend');
+  let summaryBox = document.getElementById('cal-summary-info');
+  if (!summaryBox && legendEl) {
+    summaryBox = document.createElement('div');
+    summaryBox.id = 'cal-summary-info';
+    summaryBox.className = 'cal-summary-box';
+    legendEl.insertAdjacentElement('beforebegin', summaryBox);
+  }
+
+  const allEmpDates = Object.keys(attendanceRecords)
+    .filter(d => attendanceRecords[d] && attendanceRecords[d][emp.id] !== undefined)
+    .sort();
+  const firstWorkDate = allEmpDates.length > 0 ? allEmpDates[0] : "Belgilanmagan";
+  const lastClosedDate = emp.lastSalaryDateStr || "Hali yopilmagan";
+  const currentPeriodDays = calculateDaysWorked(emp.id);
+
+  if (summaryBox) {
+    summaryBox.innerHTML = `
+      <div><strong>Ish boshlangan / ilk qayd sana:</strong> ${firstWorkDate}</div>
+      <div><strong>Oxirgi oylik yopilgan sana:</strong> ${lastClosedDate}</div>
+      <div><strong>Yopilgandan keyingi ishlagan kun:</strong> ${currentPeriodDays} kun</div>
+      <div style="margin-top:4px; font-size:0.78rem; color:#334155;">
+        <span class="cal-badge-demo">YOP</span> — oylik yopilgan sana; ramkali kunlar — oylik hisoblangan davr.
+      </div>
+    `;
+  }
+
   const year = calCurrentDate.getFullYear();
   const month = calCurrentDate.getMonth();
 
-  const monthNames = ["Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun", "Iyul", "Avgust", "Sentabr", "Oktabr", "Noyabr", "Dekabr"];
+  const monthNames = [
+    "Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun",
+    "Iyul", "Avgust", "Sentabr", "Oktabr", "Noyabr", "Dekabr"
+  ];
   document.getElementById('cal-month-year-label').innerText = `${monthNames[month]} ${year}`;
 
   const grid = document.getElementById('calendar-days-grid');
@@ -183,6 +330,8 @@ function renderCalendarModal() {
     emptyCell.className = 'cal-day-cell empty';
     grid.appendChild(emptyCell);
   }
+
+  const closedDatesArr = Array.isArray(emp.closedDates) ? emp.closedDates : [];
 
   for (let day = 1; day <= totalDays; day++) {
     const cell = document.createElement('div');
@@ -204,12 +353,21 @@ function renderCalendarModal() {
       cell.classList.add('status-red');
     }
 
+    if (emp.lastSalaryDateStr && dateStr < emp.lastSalaryDateStr) {
+      cell.classList.add('closed-period-day');
+    }
+    if (emp.lastSalaryDateStr === dateStr || closedDatesArr.includes(dateStr)) {
+      cell.classList.add('closed-cutoff-day');
+      cell.title = `Oylik yopilgan sana: ${dateStr}`;
+    }
+
     grid.appendChild(cell);
   }
 }
 
 function populateAttendanceFilter() {
   const select = document.getElementById('attendance-filter-emp');
+  if (!select) return;
   const currentVal = select.value;
   select.innerHTML = '<option value="all">Barcha xodimlar</option>';
   employees.forEach(emp => {
@@ -220,7 +378,7 @@ function populateAttendanceFilter() {
 
 function populateHistoryFilter() {
   const select = document.getElementById('history-filter-emp');
-  if(!select) return;
+  if (!select) return;
   const currentVal = select.value;
   select.innerHTML = '<option value="all">Barcha xodimlar tarixi</option>';
   employees.forEach(emp => {
@@ -246,20 +404,19 @@ function setAttendanceStatus(empId, status) {
   saveDataToFirebase();
 }
 
-// Tanlangan oylik yopish sanasidan keyingi kunlarni hisoblash
+// Tanlangan oylik yopish sanasidan keyingi kunlarni ("YYYY-MM-DD") bo'yicha aniq hisoblash
 function calculateDaysWorked(empId, customEndDate = null) {
   let totalDays = 0;
-  const emp = employees.find(e => e.id === empId);
-  const lastDateStr = emp && emp.lastSalaryDateStr ? emp.lastSalaryDateStr : "2000-01-01";
-  
-  const lastDate = new Date(lastDateStr);
-  const endTime = customEndDate ? new Date(customEndDate).getTime() : new Date().getTime();
+  const emp = employees.find(e => String(e.id) === String(empId));
+  const lastDateStr = emp && emp.lastSalaryDateStr ? emp.lastSalaryDateStr : "";
+  const endDateStr = customEndDate || getLocalDateStr();
 
   for (let dateStr in attendanceRecords) {
-    const recordDate = new Date(dateStr);
-    // Oxirgi yopilgan sana bilan tanlangan oylik sanasi orasidagi kunlarni olamiz
-    if (recordDate > lastDate && recordDate.getTime() <= endTime) {
-      if (attendanceRecords[dateStr][empId] !== undefined) {
+    const afterLastClosed = !lastDateStr || dateStr > lastDateStr;
+    const withinEndDate = !endDateStr || dateStr <= endDateStr;
+
+    if (afterLastClosed && withinEndDate) {
+      if (attendanceRecords[dateStr] && attendanceRecords[dateStr][empId] !== undefined) {
         totalDays += attendanceRecords[dateStr][empId];
       }
     }
@@ -269,6 +426,7 @@ function calculateDaysWorked(empId, customEndDate = null) {
 
 function populateMoneySelect() {
   const select = document.getElementById('money-emp-id');
+  if (!select) return;
   select.innerHTML = '<option value="">-- Xodimni tanlang --</option>';
   employees.forEach(emp => {
     select.innerHTML += `<option value="${emp.id}">${emp.name} (${emp.type === 'daily' ? 'Kunlik' : 'Oylik'})</option>`;
@@ -299,7 +457,7 @@ function updateMoneyCalcPreview() {
 
   if (!empId || type !== 'salary') return;
 
-  const emp = employees.find(e => e.id == empId);
+  const emp = employees.find(e => String(e.id) === String(empId));
   if (!emp) return;
 
   const daysWorked = calculateDaysWorked(emp.id, moneyDate);
@@ -340,39 +498,46 @@ function handleMoneySubmit(e) {
   const moneyDate = document.getElementById('money-date').value;
   const note = document.getElementById('money-note').value;
 
-  const emp = employees.find(e => e.id == empId);
+  const emp = employees.find(e => String(e.id) === String(empId));
   if (!emp) return alert("Xodimni tanlang!");
 
   let amountToAdd = 0;
   let historyTitle = '';
+  const prevLastSalaryDateStr = emp.lastSalaryDateStr || "";
 
   if (type === 'advance') {
     amountToAdd = parseFloat(document.getElementById('adv-amount').value);
     if (!amountToAdd || amountToAdd <= 0) return alert("Summani kiriting!");
-    
+
     emp.takenMoney += amountToAdd;
     historyTitle = `Avans berildi: ${emp.name}`;
   } else {
     const daysWorked = calculateDaysWorked(emp.id, moneyDate);
     let dailyRate = emp.type === 'daily' ? emp.rate : (emp.rate / 26);
     let gross = emp.type === 'daily' ? (daysWorked * emp.rate) : emp.rate;
-    
-    if(emp.type === 'monthly') {
+
+    if (emp.type === 'monthly') {
       let missingDays = Math.max(0, 26 - daysWorked);
       gross = Math.max(0, emp.rate - (missingDays * dailyRate));
     }
-    
+
     amountToAdd = Math.max(0, gross - emp.takenMoney);
     historyTitle = `Oylik yopildi: ${emp.name}`;
-    
+
     emp.takenMoney = 0;
-    // Oylik yopilgan sana sifatida formda tanlangan sana saqlanadi
     emp.lastSalaryDateStr = moneyDate;
+    if (!Array.isArray(emp.closedDates)) emp.closedDates = [];
+    if (moneyDate && !emp.closedDates.includes(moneyDate)) {
+      emp.closedDates.push(moneyDate);
+    }
   }
 
   historyList.unshift({
     id: Date.now(),
     empId: emp.id,
+    type: type,
+    closedDate: type === 'salary' ? moneyDate : null,
+    prevLastSalaryDateStr: type === 'salary' ? prevLastSalaryDateStr : null,
     title: historyTitle,
     amount: Math.round(amountToAdd),
     note: note || (type === 'advance' ? 'Avans' : 'Oylik yakuni'),
@@ -380,14 +545,14 @@ function handleMoneySubmit(e) {
   });
 
   document.getElementById('money-form').reset();
-  document.getElementById('money-date').valueAsDate = new Date();
+  document.getElementById('money-date').value = getLocalDateStr();
   document.getElementById('salary-calc-preview').style.display = 'none';
   saveDataToFirebase();
   switchTab('history', document.querySelectorAll('.nav-item')[3]);
 }
 
 function openHistoryEditModal(histId) {
-  const item = historyList.find(h => h.id === histId);
+  const item = historyList.find(h => String(h.id) === String(histId));
   if (!item) return;
 
   document.getElementById('edit-hist-id').value = item.id;
@@ -402,11 +567,11 @@ function closeHistoryModal() {
 
 function saveHistoryEdit(e) {
   e.preventDefault();
-  const id = parseInt(document.getElementById('edit-hist-id').value);
+  const id = document.getElementById('edit-hist-id').value;
   const amount = parseFloat(document.getElementById('edit-hist-amount').value);
   const note = document.getElementById('edit-hist-note').value;
 
-  const item = historyList.find(h => h.id === id);
+  const item = historyList.find(h => String(h.id) === String(id));
   if (item) {
     item.amount = amount;
     item.note = note;
@@ -419,15 +584,43 @@ function deleteHistoryItem(id) {
   if (!verifyPassword()) return;
 
   if (confirm("Bu tarix yozuvini o'chirmoqchimisiz?")) {
-    const item = historyList.find(h => h.id === id);
-    if (item && item.empId) {
-      const emp = employees.find(e => e.id === item.empId);
-      if (emp && item.title.includes("Avans berildi")) {
-        emp.takenMoney = Math.max(0, emp.takenMoney - item.amount);
+    const item = historyList.find(h => String(h.id) === String(id));
+    if (item) {
+      const emp = employees.find(
+        e => String(e.id) === String(item.empId) ||
+             (item.title && e.name && item.title.toLowerCase().includes(e.name.toLowerCase()))
+      );
+
+      if (emp) {
+        if (item.title && item.title.includes("Avans berildi")) {
+          emp.takenMoney = Math.max(0, emp.takenMoney - item.amount);
+        } else if (item.title && item.title.includes("Oylik yopildi")) {
+          if (Array.isArray(emp.closedDates) && item.closedDate) {
+            emp.closedDates = emp.closedDates.filter(d => d !== item.closedDate);
+          }
+
+          // O'chirilayotgan yozuvdan keyingi boshqa oylik yopilish bormi-yo'qligini tekshiramiz
+          const remainingCloses = historyList
+            .filter(h => String(h.id) !== String(id) &&
+                       (String(h.empId) === String(emp.id) || (h.title && h.title.toLowerCase().includes(emp.name.toLowerCase()))) &&
+                       h.title && h.title.includes("Oylik yopildi") && h.closedDate)
+            .map(h => h.closedDate)
+            .sort();
+
+          if (typeof item.prevLastSalaryDateStr === "string" && item.prevLastSalaryDateStr !== "") {
+            emp.lastSalaryDateStr = item.prevLastSalaryDateStr;
+          } else if (remainingCloses.length > 0) {
+            emp.lastSalaryDateStr = remainingCloses[remainingCloses.length - 1];
+          } else if (emp.name && emp.name.toLowerCase().includes("erkinjon")) {
+            emp.lastSalaryDateStr = "2026-11-19";
+          } else {
+            emp.lastSalaryDateStr = "";
+          }
+        }
       }
     }
 
-    historyList = historyList.filter(h => h.id !== id);
+    historyList = historyList.filter(h => String(h.id) !== String(id));
     saveDataToFirebase();
   }
 }
@@ -445,13 +638,14 @@ function renderAll() {
   renderEmployees();
   renderAttendance();
   renderHistory();
-  if(document.getElementById('calendar-modal').classList.contains('active')) {
+  if (document.getElementById('calendar-modal').classList.contains('active')) {
     renderCalendarModal();
   }
 }
 
 function renderEmployees() {
   const list = document.getElementById('employee-list');
+  if (!list) return;
   list.innerHTML = '';
 
   if (employees.length === 0) {
@@ -461,19 +655,20 @@ function renderEmployees() {
 
   employees.forEach(emp => {
     const daysWorked = calculateDaysWorked(emp.id);
+    const closedInfo = emp.lastSalaryDateStr ? ` • Yopilgan: ${emp.lastSalaryDateStr}` : '';
     list.innerHTML += `
-      <div class="employee-card" onclick="openEmployeeCalendar(${emp.id})">
+      <div class="employee-card" onclick="openEmployeeCalendar('${emp.id}')">
         <div class="emp-top">
           <span class="emp-name">${emp.name}</span>
           <span class="emp-rate-badge">${emp.rate.toLocaleString()} so'm (${emp.type === 'daily' ? 'kunlik' : 'oylik'})</span>
         </div>
         <div class="emp-details">
-          <span>Ishlagan kun: <strong>${daysWorked} kun</strong></span>
+          <span>Ishlagan kun: <strong>${daysWorked} kun</strong>${closedInfo}</span>
           <span>Olingan avans: <strong style="color:var(--danger);">${emp.takenMoney.toLocaleString()} so'm</strong></span>
         </div>
         <div class="emp-actions" onclick="event.stopPropagation()">
-          <button class="btn-sm warning" onclick="openEmpModal(${emp.id})"><i class="fa-solid fa-pen"></i> Izmenit</button>
-          <button class="btn-sm danger" onclick="deleteEmployee(${emp.id})"><i class="fa-solid fa-trash"></i> O'chirish</button>
+          <button class="btn-sm warning" onclick="openEmpModal('${emp.id}')"><i class="fa-solid fa-pen"></i> Izmenit</button>
+          <button class="btn-sm danger" onclick="deleteEmployee('${emp.id}')"><i class="fa-solid fa-trash"></i> O'chirish</button>
         </div>
       </div>
     `;
@@ -482,13 +677,14 @@ function renderEmployees() {
 
 function renderAttendance() {
   const list = document.getElementById('attendance-list');
+  if (!list) return;
   const selectedDate = document.getElementById('attendance-date').value;
   const filterEmpId = document.getElementById('attendance-filter-emp').value;
   list.innerHTML = '';
 
   let filteredEmps = employees;
   if (filterEmpId !== 'all') {
-    filteredEmps = employees.filter(e => e.id == filterEmpId);
+    filteredEmps = employees.filter(e => String(e.id) === String(filterEmpId));
   }
 
   if (filteredEmps.length === 0) {
@@ -501,13 +697,12 @@ function renderAttendance() {
   filteredEmps.forEach(emp => {
     const status = dateRecords[emp.id];
     let statusText = 'Belgilanmagan';
-    if (status === 1) statusText = 'To\'liq kun';
+    if (status === 1) statusText = "To'liq kun";
     else if (status === 0.5) statusText = 'Yarim kun';
     else if (status === 0) statusText = 'Kelmagan';
 
     list.innerHTML += `
       <div class="employee-card">
-        /div>
         <div class="emp-top">
           <span class="emp-name">${emp.name}</span>
           <span style="font-size: 0.85rem; color: var(--text-muted);">${emp.type === 'daily' ? 'Kunlik' : 'Oylik'}</span>
@@ -516,13 +711,13 @@ function renderAttendance() {
           Sana: <strong>${selectedDate}</strong> | Holati: <strong>${statusText}</strong>
         </p>
         <div class="attendance-actions">
-          <button class="${status === 1 ? 'active-full' : ''}" onclick="setAttendanceStatus(${emp.id}, 1)">
+          <button class="${status === 1 ? 'active-full' : ''}" onclick="setAttendanceStatus('${emp.id}', 1)">
             <i class="fa-solid fa-check"></i> To'liq (1)
           </button>
-          <button class="${status === 0.5 ? 'active-half' : ''}" onclick="setAttendanceStatus(${emp.id}, 0.5)">
+          <button class="${status === 0.5 ? 'active-half' : ''}" onclick="setAttendanceStatus('${emp.id}', 0.5)">
             <i class="fa-solid fa-star-half-stroke"></i> Yarim (0.5)
           </button>
-          <button class="${status === 0 ? 'active-absent' : ''}" onclick="setAttendanceStatus(${emp.id}, 0)">
+          <button class="${status === 0 ? 'active-absent' : ''}" onclick="setAttendanceStatus('${emp.id}', 0)">
             <i class="fa-solid fa-xmark"></i> Kelmadi (0)
           </button>
         </div>
@@ -533,12 +728,13 @@ function renderAttendance() {
 
 function renderHistory() {
   const list = document.getElementById('history-list');
+  if (!list) return;
   const filterEmpId = document.getElementById('history-filter-emp') ? document.getElementById('history-filter-emp').value : 'all';
   list.innerHTML = '';
 
   let filteredHistory = historyList;
   if (filterEmpId !== 'all') {
-    filteredHistory = historyList.filter(item => item.empId == filterEmpId);
+    filteredHistory = historyList.filter(item => String(item.empId) === String(filterEmpId));
   }
 
   if (filteredHistory.length === 0) {
@@ -553,8 +749,8 @@ function renderHistory() {
           <h4>${item.title}</h4>
           <p>${item.note} • ${item.date}</p>
           <div class="history-actions">
-            <button class="btn-sm warning" onclick="openHistoryEditModal(${item.id})"><i class="fa-solid fa-pen"></i> Izmenit</button>
-            <button class="btn-sm danger" onclick="deleteHistoryItem(${item.id})"><i class="fa-solid fa-trash"></i> O'chirish</button>
+            <button class="btn-sm warning" onclick="openHistoryEditModal('${item.id}')"><i class="fa-solid fa-pen"></i> Izmenit</button>
+            <button class="btn-sm danger" onclick="deleteHistoryItem('${item.id}')"><i class="fa-solid fa-trash"></i> O'chirish</button>
           </div>
         </div>
         <div class="history-amount">
