@@ -30,13 +30,24 @@ function getLocalDateStr(dateObj = new Date()) {
   return `${y}-${m}-${d}`;
 }
 
+// "Pul berish" bo'limiga "Pul qaytarish" opsiyasini avtomatik qo'shish (index.html o'zgartirilmasa ham ishlashi uchun)
+(function ensureReturnMoneyOption() {
+  const typeSelect = document.getElementById('money-type');
+  if (typeSelect && !typeSelect.querySelector('option[value="return"]')) {
+    const opt = document.createElement('option');
+    opt.value = 'return';
+    opt.textContent = 'Pul qaytarish (Avans qaytarish)';
+    typeSelect.appendChild(opt);
+  }
+})();
+
 const attDateInput = document.getElementById('attendance-date');
 if (attDateInput && !attDateInput.value) attDateInput.value = getLocalDateStr();
 
 const moneyDateInput = document.getElementById('money-date');
 if (moneyDateInput && !moneyDateInput.value) moneyDateInput.value = getLocalDateStr();
 
-// Kalendarda hisob-kitob sanalari va yopilgan kunlarni ajratish uslublari
+// Kalendarda eski/yopilgan kunlarni xiraroq, yangi/joriy davr kunlarini yorqin ko'rsatish uslublari
 (function injectCalendarStyles() {
   const oldStyle = document.getElementById('custom-calendar-settled-style');
   if (oldStyle) oldStyle.remove();
@@ -46,20 +57,20 @@ if (moneyDateInput && !moneyDateInput.value) moneyDateInput.value = getLocalDate
   style.textContent = `
     .cal-day-cell {
       position: relative;
-      transition: transform 0.12s ease;
+      transition: opacity 0.15s ease, transform 0.12s ease;
     }
-    .cal-day-cell.closed-period-day {
-      outline: 2px solid #4f46e5;
-      outline-offset: -2px;
-      opacity: 0.78;
+    .cal-day-cell.dimmed-past-day {
+      opacity: 0.34 !important;
+      filter: grayscale(35%);
+    }
+    .cal-day-cell.active-period-day {
+      opacity: 1 !important;
+      font-weight: 600;
     }
     .cal-day-cell.closed-cutoff-day {
-      background-color: #e0e7ff !important;
-      color: #1e1b4b !important;
-      font-weight: 700;
-      outline: 2px solid #3730a3;
+      opacity: 0.55 !important;
+      outline: 2px dashed #4f46e5;
       outline-offset: -2px;
-      opacity: 1 !important;
     }
     .cal-day-cell.closed-cutoff-day::after {
       content: "YOP";
@@ -89,7 +100,7 @@ if (moneyDateInput && !moneyDateInput.value) moneyDateInput.value = getLocalDate
       padding: 1px 5px;
       border-radius: 4px;
       background: #e0e7ff;
-      border: 1px solid #3730a3;
+      border: 1px solid #4f46e5;
       color: #1e1b4b;
       font-size: 0.72rem;
       font-weight: 700;
@@ -109,7 +120,6 @@ function normalizeErkinjonState() {
          h.title && h.title.toLowerCase().includes("oylik yopildi")
   );
 
-  // Agar Erkinjon bo'yicha oylik yopilish tarixi o'chirilgan bo'lsa yoki yopilish sanasi 2026-11-19 dan keyin bo'lsa, 2026-11-19 ga qaytaramiz
   if (!hasErkinjonCloseInHistory && (!erkinjon.lastSalaryDateStr || erkinjon.lastSalaryDateStr !== "2026-11-19")) {
     erkinjon.lastSalaryDateStr = "2026-11-19";
     if (Array.isArray(erkinjon.closedDates)) {
@@ -247,20 +257,7 @@ function deleteEmployee(id) {
 
 function openEmployeeCalendar(empId) {
   activeCalendarEmpId = empId;
-  const emp = employees.find(e => String(e.id) === String(empId));
-
-  // Agar xodimning oxirgi yopilgan sanasi bo'lsa, kalendarni o'sha oyga ochish qulay bo'ladi (yoki joriy oyga)
-  if (emp && emp.lastSalaryDateStr) {
-    const parts = emp.lastSalaryDateStr.split('-');
-    if (parts.length === 3) {
-      calCurrentDate = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
-    } else {
-      calCurrentDate = new Date();
-    }
-  } else {
-    calCurrentDate = new Date();
-  }
-
+  calCurrentDate = new Date();
   renderCalendarModal();
   document.getElementById('calendar-modal').classList.add('active');
 }
@@ -299,11 +296,11 @@ function renderCalendarModal() {
 
   if (summaryBox) {
     summaryBox.innerHTML = `
-      <div><strong>Ish boshlangan / ilk qayd sana:</strong> ${firstWorkDate}</div>
+      <div><strong>Ilk qayd etilgan sana:</strong> ${firstWorkDate}</div>
       <div><strong>Oxirgi oylik yopilgan sana:</strong> ${lastClosedDate}</div>
-      <div><strong>Yopilgandan keyingi ishlagan kun:</strong> ${currentPeriodDays} kun</div>
+      <div><strong>Joriy (yorqin) davr ishlagan kunlari:</strong> ${currentPeriodDays} kun</div>
       <div style="margin-top:4px; font-size:0.78rem; color:#334155;">
-        <span class="cal-badge-demo">YOP</span> — oylik yopilgan sana; ramkali kunlar — oylik hisoblangan davr.
+        Yorqin kunlar — oxirgi yopilishdan keyingi davr; xira kunlar — avvalgi yopilgan davr; <span class="cal-badge-demo">YOP</span> — yopilgan sana.
       </div>
     `;
   }
@@ -353,12 +350,18 @@ function renderCalendarModal() {
       cell.classList.add('status-red');
     }
 
-    if (emp.lastSalaryDateStr && dateStr < emp.lastSalaryDateStr) {
-      cell.classList.add('closed-period-day');
-    }
-    if (emp.lastSalaryDateStr === dateStr || closedDatesArr.includes(dateStr)) {
-      cell.classList.add('closed-cutoff-day');
-      cell.title = `Oylik yopilgan sana: ${dateStr}`;
+    // Oxirgi yopilgan sanagacha bo'lgan kunlarni xiraroq, undan keyingi kunlarni yorqin ko'rsatish
+    if (emp.lastSalaryDateStr) {
+      if (dateStr < emp.lastSalaryDateStr) {
+        cell.classList.add('dimmed-past-day');
+      } else if (dateStr === emp.lastSalaryDateStr || closedDatesArr.includes(dateStr)) {
+        cell.classList.add('closed-cutoff-day');
+        cell.title = `Oylik yopilgan sana: ${dateStr}`;
+      } else {
+        cell.classList.add('active-period-day');
+      }
+    } else {
+      cell.classList.add('active-period-day');
     }
 
     grid.appendChild(cell);
@@ -438,14 +441,25 @@ function toggleMoneyInputs() {
   const type = document.getElementById('money-type').value;
   const advanceGroup = document.getElementById('advance-input-group');
   const preview = document.getElementById('salary-calc-preview');
+  const advLabel = advanceGroup ? advanceGroup.querySelector('label') : null;
+  const advInput = document.getElementById('adv-amount');
 
   if (type === 'advance') {
-    advanceGroup.style.display = 'block';
-    preview.style.display = 'none';
+    if (advanceGroup) advanceGroup.style.display = 'block';
+    if (advLabel) advLabel.textContent = "Avans summasi (so'm)";
+    if (advInput) advInput.placeholder = "Masalan: 50000";
+    if (preview) preview.style.display = 'none';
+  } else if (type === 'return') {
+    if (advanceGroup) advanceGroup.style.display = 'block';
+    if (advLabel) advLabel.textContent = "Qaytariladigan summa (so'm)";
+    if (advInput) advInput.placeholder = "Masalan: 100000";
+    if (preview) preview.style.display = 'none';
   } else {
-    advanceGroup.style.display = 'none';
-    preview.style.display = 'block';
-    updateMoneyCalcPreview();
+    if (advanceGroup) advanceGroup.style.display = 'none';
+    if (preview) {
+      preview.style.display = 'block';
+      updateMoneyCalcPreview();
+    }
   }
 }
 
@@ -495,7 +509,7 @@ function handleMoneySubmit(e) {
   e.preventDefault();
   const empId = document.getElementById('money-emp-id').value;
   const type = document.getElementById('money-type').value;
-  const moneyDate = document.getElementById('money-date').value;
+  const moneyDate = document.getElementById('money-date').value || getLocalDateStr();
   const note = document.getElementById('money-note').value;
 
   const emp = employees.find(e => String(e.id) === String(empId));
@@ -504,13 +518,20 @@ function handleMoneySubmit(e) {
   let amountToAdd = 0;
   let historyTitle = '';
   const prevLastSalaryDateStr = emp.lastSalaryDateStr || "";
+  const prevTakenMoney = emp.takenMoney || 0;
 
   if (type === 'advance') {
     amountToAdd = parseFloat(document.getElementById('adv-amount').value);
     if (!amountToAdd || amountToAdd <= 0) return alert("Summani kiriting!");
 
-    emp.takenMoney += amountToAdd;
+    emp.takenMoney = prevTakenMoney + amountToAdd;
     historyTitle = `Avans berildi: ${emp.name}`;
+  } else if (type === 'return') {
+    amountToAdd = parseFloat(document.getElementById('adv-amount').value);
+    if (!amountToAdd || amountToAdd <= 0) return alert("Qaytariladigan summani kiriting!");
+
+    emp.takenMoney = Math.max(0, prevTakenMoney - amountToAdd);
+    historyTitle = `Pul qaytarildi: ${emp.name}`;
   } else {
     const daysWorked = calculateDaysWorked(emp.id, moneyDate);
     let dailyRate = emp.type === 'daily' ? emp.rate : (emp.rate / 26);
@@ -521,7 +542,7 @@ function handleMoneySubmit(e) {
       gross = Math.max(0, emp.rate - (missingDays * dailyRate));
     }
 
-    amountToAdd = Math.max(0, gross - emp.takenMoney);
+    amountToAdd = Math.max(0, gross - prevTakenMoney);
     historyTitle = `Oylik yopildi: ${emp.name}`;
 
     emp.takenMoney = 0;
@@ -532,21 +553,25 @@ function handleMoneySubmit(e) {
     }
   }
 
+  const labelText = type === 'advance' ? 'Avans' : (type === 'return' ? 'Pul qaytarish' : 'Oylik');
+
   historyList.unshift({
     id: Date.now(),
     empId: emp.id,
     type: type,
     closedDate: type === 'salary' ? moneyDate : null,
     prevLastSalaryDateStr: type === 'salary' ? prevLastSalaryDateStr : null,
+    prevTakenMoney: prevTakenMoney,
     title: historyTitle,
     amount: Math.round(amountToAdd),
-    note: note || (type === 'advance' ? 'Avans' : 'Oylik yakuni'),
-    date: new Date(moneyDate).toLocaleDateString() + ' (' + (type === 'advance' ? 'Avans' : 'Oylik') + ')'
+    note: note || (type === 'advance' ? 'Avans' : (type === 'return' ? 'Xodimdan pul qaytarildi' : 'Oylik yakuni')),
+    date: new Date(moneyDate).toLocaleDateString() + ' (' + labelText + ')'
   });
 
   document.getElementById('money-form').reset();
   document.getElementById('money-date').value = getLocalDateStr();
   document.getElementById('salary-calc-preview').style.display = 'none';
+  toggleMoneyInputs();
   saveDataToFirebase();
   switchTab('history', document.querySelectorAll('.nav-item')[3]);
 }
@@ -592,18 +617,24 @@ function deleteHistoryItem(id) {
       );
 
       if (emp) {
-        if (item.title && item.title.includes("Avans berildi")) {
-          emp.takenMoney = Math.max(0, emp.takenMoney - item.amount);
-        } else if (item.title && item.title.includes("Oylik yopildi")) {
+        const titleLower = (item.title || "").toLowerCase();
+
+        if (item.type === 'advance' || titleLower.includes("avans berildi")) {
+          // Avans hujjati o'chirilsa, olingan avansdan shu summa ayiriladi
+          emp.takenMoney = Math.max(0, (emp.takenMoney || 0) - Number(item.amount || 0));
+        } else if (item.type === 'return' || titleLower.includes("pul qaytarildi")) {
+          // Pul qaytarish hujjati o'chirilsa, qaytarilgan summa olingan avans balansiga qayta qo'shiladi
+          emp.takenMoney = (emp.takenMoney || 0) + Number(item.amount || 0);
+        } else if (item.type === 'salary' || titleLower.includes("oylik yopildi")) {
           if (Array.isArray(emp.closedDates) && item.closedDate) {
             emp.closedDates = emp.closedDates.filter(d => d !== item.closedDate);
           }
 
-          // O'chirilayotgan yozuvdan keyingi boshqa oylik yopilish bormi-yo'qligini tekshiramiz
           const remainingCloses = historyList
             .filter(h => String(h.id) !== String(id) &&
                        (String(h.empId) === String(emp.id) || (h.title && h.title.toLowerCase().includes(emp.name.toLowerCase()))) &&
-                       h.title && h.title.includes("Oylik yopildi") && h.closedDate)
+                       ((h.type === 'salary') || (h.title && h.title.toLowerCase().includes("oylik yopildi"))) &&
+                       h.closedDate)
             .map(h => h.closedDate)
             .sort();
 
@@ -615,6 +646,10 @@ function deleteHistoryItem(id) {
             emp.lastSalaryDateStr = "2026-11-19";
           } else {
             emp.lastSalaryDateStr = "";
+          }
+
+          if (typeof item.prevTakenMoney === "number") {
+            emp.takenMoney = item.prevTakenMoney;
           }
         }
       }
@@ -635,6 +670,7 @@ function clearAllHistory() {
 }
 
 function renderAll() {
+  ensureReturnMoneyOption();
   renderEmployees();
   renderAttendance();
   renderHistory();
@@ -664,7 +700,7 @@ function renderEmployees() {
         </div>
         <div class="emp-details">
           <span>Ishlagan kun: <strong>${daysWorked} kun</strong>${closedInfo}</span>
-          <span>Olingan avans: <strong style="color:var(--danger);">${emp.takenMoney.toLocaleString()} so'm</strong></span>
+          <span>Olingan avans: <strong style="color:var(--danger);">${(emp.takenMoney || 0).toLocaleString()} so'm</strong></span>
         </div>
         <div class="emp-actions" onclick="event.stopPropagation()">
           <button class="btn-sm warning" onclick="openEmpModal('${emp.id}')"><i class="fa-solid fa-pen"></i> Izmenit</button>
@@ -743,6 +779,10 @@ function renderHistory() {
   }
 
   filteredHistory.forEach(item => {
+    const isReturn = item.type === 'return' || (item.title && item.title.toLowerCase().includes("pul qaytarildi"));
+    const signPrefix = isReturn ? '-' : '+';
+    const amountColor = isReturn ? 'color: var(--danger);' : '';
+
     list.innerHTML += `
       <div class="history-card">
         <div class="history-info">
@@ -753,8 +793,8 @@ function renderHistory() {
             <button class="btn-sm danger" onclick="deleteHistoryItem('${item.id}')"><i class="fa-solid fa-trash"></i> O'chirish</button>
           </div>
         </div>
-        <div class="history-amount">
-          +${item.amount.toLocaleString()} so'm
+        <div class="history-amount" style="${amountColor}">
+          ${signPrefix}${Number(item.amount || 0).toLocaleString()} so'm
         </div>
       </div>
     `;
