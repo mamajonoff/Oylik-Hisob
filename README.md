@@ -3,7 +3,8 @@
 Xodimlar davomati, avans va oylik hisob-kitobi uchun mobil veb-ilova (Firebase Firestore).
 
 ## Imkoniyatlar
-- Xodimlar (kunlik / oylik maosh), umumiy statistika
+- Xodimlar (kunlik / oylik / **ishbay**), umumiy statistika
+- Ishbay xodim: har bir bajarilgan ish (nomi, narxi, soni) alohida kiritiladi; oylik = ishlar yig'indisi − avans
 - Keldi-ketdi: to'liq / yarim / kelmadi, "hammasini keldi qilish", kunlarni ‹ › bilan almashtirish
 - Avans, pul qaytarish, oylik yopish (avans oshib ketsa qarz keyingi davrga o'tadi)
 - Tarix: filtr, jami summalar, Excel (CSV) ga yuklab olish

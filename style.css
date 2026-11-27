@@ -663,3 +663,22 @@ input:focus, select:focus {
   padding-bottom: env(safe-area-inset-bottom);
   height: calc(65px + env(safe-area-inset-bottom));
 }
+
+/* ---------- Ishbay (donabay) xodim ---------- */
+.btn-sm.primary { background: #eef2ff; color: var(--primary); }
+.cal-day-cell.clickable { cursor: pointer; }
+.work-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border-color);
+  font-size: 0.9rem;
+}
+.work-row-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.employee-card .btn { margin-top: 10px; }
