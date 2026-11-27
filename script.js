@@ -35,6 +35,9 @@ const MONTH_NAMES = [
 let employees = [];
 let historyList = [];
 let attendanceRecords = {};
+// Ishbay xodimlar bajargan ishlar: { [id]: {id, empId, date, item, price, qty} }
+let workRecords = {};
+let workPriceManual = false;
 
 let calCurrentDate = new Date();
 let activeCalendarEmpId = null;
@@ -146,6 +149,7 @@ mainDocRef.onSnapshot({ includeMetadataChanges: true }, (doc) => {
     employees = toList(data.employees);
     historyList = toList(data.historyList);
     attendanceRecords = toMap(data.attendanceRecords);
+    workRecords = toMap(data.workRecords);
   }
   setSyncStatus(doc.metadata && doc.metadata.hasPendingWrites ? 'pending' : 'online');
   renderAll();
@@ -179,6 +183,23 @@ function saveAttendanceCells(cells) {
     console.error("Davomatni saqlashda xatolik:", error);
     setSyncStatus('error');
     showToast("Davomatni saqlashda xatolik!", 'error');
+  });
+}
+
+// Ishbay xodim ishlari ham alohida (bitta yozuv bilan) saqlanadi
+function saveWorkRecord(rec) {
+  return mainDocRef.set({ workRecords: { [String(rec.id)]: rec } }, { merge: true }).catch((error) => {
+    console.error("Ishni saqlashda xatolik:", error);
+    setSyncStatus('error');
+    showToast("Ishni saqlashda xatolik!", 'error');
+  });
+}
+
+function removeWorkRecord(id) {
+  return mainDocRef.set({ workRecords: { [String(id)]: FieldValue.delete() } }, { merge: true }).catch((error) => {
+    console.error("Ishni o'chirishda xatolik:", error);
+    setSyncStatus('error');
+    showToast("O'chirishda xatolik!", 'error');
   });
 }
 
@@ -241,6 +262,19 @@ function openEmpModal(id = null) {
     document.getElementById('emp-form').reset();
     document.getElementById('edit-emp-id').value = '';
   }
+  toggleEmpRate();
+}
+
+// Ishbay xodim uchun doimiy summa kerak emas (narx har bir ish uchun alohida kiritiladi)
+function toggleEmpRate() {
+  const isPiece = document.getElementById('emp-type').value === 'piece';
+  document.getElementById('emp-rate-group').style.display = isPiece ? 'none' : 'block';
+  document.getElementById('emp-rate').required = !isPiece;
+}
+
+function typeLabel(emp) {
+  if (emp.type === 'piece') return 'Ishbay';
+  return emp.type === 'monthly' ? 'Oylik' : 'Kunlik';
 }
 
 function closeEmpModal() {
@@ -252,10 +286,10 @@ function saveEmployee(e) {
   const id = document.getElementById('edit-emp-id').value;
   const name = document.getElementById('emp-name').value.trim();
   const type = document.getElementById('emp-type').value;
-  const rate = parseFloat(document.getElementById('emp-rate').value) || 0;
+  const rate = type === 'piece' ? 0 : (parseFloat(document.getElementById('emp-rate').value) || 0);
 
   if (!name) return alert("Ismni kiriting!");
-  if (rate <= 0) return alert("Summa 0 dan katta bo'lishi kerak!");
+  if (type !== 'piece' && rate <= 0) return alert("Summa 0 dan katta bo'lishi kerak!");
 
   if (id) {
     const emp = findEmp(id);
@@ -323,25 +357,59 @@ function calculateDaysWorked(empId, customEndDate = null) {
   return totalDays;
 }
 
-function computeSalary(emp, endDate) {
-  const daysWorked = calculateDaysWorked(emp.id, endDate);
-  const rate = Number(emp.rate) || 0;
-  const taken = Number(emp.takenMoney) || 0;
 
-  let gross;
-  let dailyRate;
-  let missingDays = 0;
-  if (emp.type === 'daily') {
-    dailyRate = rate;
-    gross = daysWorked * rate;
+function getWorkList() {
+  return Object.values(workRecords).filter(w => w && w.empId !== undefined && w.date);
+}
+
+function computeSalary(emp, endDate) {
+  const taken = Number(emp.takenMoney) || 0;
+  const rate = Number(emp.rate) || 0;
+  let daysWorked, gross, dailyRate = 0, missingDays = 0;
+  let pieces = 0;
+  const itemLines = [];
+
+  if (emp.type === 'piece') {
+    // Ishbay: oxirgi yopilgan sanadan keyingi va tanlangan sanagacha bajarilgan ishlar yig'indisi
+    const lastDateStr = emp.lastSalaryDateStr || '';
+    const endDateStr = endDate || getLocalDateStr();
+    const days = new Set();
+    const groups = {};
+    gross = 0;
+    getWorkList().forEach(w => {
+      if (String(w.empId) !== String(emp.id)) return;
+      if (lastDateStr && w.date <= lastDateStr) return;
+      if (w.date > endDateStr) return;
+      const q = Number(w.qty) || 0;
+      const pr = Number(w.price) || 0;
+      gross += q * pr;
+      pieces += q;
+      days.add(w.date);
+      const name = String(w.item || '').trim() || 'Ish';
+      const k = `${name}|${pr}`;
+      if (!groups[k]) groups[k] = { name, price: pr, qty: 0, sum: 0 };
+      groups[k].qty += q;
+      groups[k].sum += q * pr;
+    });
+    Object.values(groups).forEach(g => itemLines.push(g));
+    daysWorked = days.size;
   } else {
-    dailyRate = rate / MONTHLY_WORK_DAYS;
-    missingDays = Math.max(0, MONTHLY_WORK_DAYS - daysWorked);
-    gross = Math.max(0, rate - missingDays * dailyRate);
+    daysWorked = calculateDaysWorked(emp.id, endDate);
+    if (emp.type === 'daily') {
+      dailyRate = rate;
+      gross = daysWorked * rate;
+    } else {
+      dailyRate = rate / MONTHLY_WORK_DAYS;
+      missingDays = Math.max(0, MONTHLY_WORK_DAYS - daysWorked);
+      gross = Math.max(0, rate - missingDays * dailyRate);
+    }
   }
 
   const net = gross - taken;
   return {
+    isPiece: emp.type === 'piece',
+    pieces,
+    itemLines,
     daysWorked,
     rate,
     dailyRate,
@@ -352,6 +420,111 @@ function computeSalary(emp, endDate) {
     // Avans ishlab topilgandan ko'p bo'lsa, farq yo'qolmaydi — keyingi davrga qarz bo'lib o'tadi
     carryDebt: Math.max(0, Math.round(-net))
   };
+}
+
+// ---------------------------------------------------------------------------
+// Ishbay xodim: bajarilgan ishlarni kiritish
+// ---------------------------------------------------------------------------
+
+// Oldin kiritilgan ish nomlari va oxirgi narxlari (tezroq kiritish uchun)
+function workItemSuggestions(empId) {
+  const list = getWorkList().sort((a, b) => (a.date === b.date ? Number(a.id) - Number(b.id) : (a.date < b.date ? -1 : 1)));
+  const map = {};
+  list.forEach(w => { map[String(w.item).trim().toLowerCase()] = { name: String(w.item).trim(), price: w.price }; });
+  // shu xodimning o'z narxlari ustunroq
+  list.filter(w => String(w.empId) === String(empId)).forEach(w => {
+    map[String(w.item).trim().toLowerCase()] = { name: String(w.item).trim(), price: w.price };
+  });
+  return map;
+}
+
+function openWorkModal(empId, dateStr) {
+  const emp = findEmp(empId);
+  if (!emp) return;
+  document.getElementById('work-emp-id').value = emp.id;
+  document.getElementById('work-modal-title').innerText = `${emp.name} — ish qo'shish`;
+  document.getElementById('work-date').value = dateStr || getLocalDateStr();
+  document.getElementById('work-item').value = '';
+  document.getElementById('work-price').value = '';
+  document.getElementById('work-qty').value = '1';
+  workPriceManual = false;
+
+  const sugg = workItemSuggestions(emp.id);
+  document.getElementById('work-item-list').innerHTML = Object.values(sugg)
+    .map(x => `<option value="${escapeHtml(x.name)}">${formatMoney(x.price)} so'm</option>`).join('');
+
+  updateWorkTotal();
+  document.getElementById('work-modal').classList.add('active');
+}
+
+function closeWorkModal() {
+  document.getElementById('work-modal').classList.remove('active');
+}
+
+function onWorkItemInput() {
+  const empId = document.getElementById('work-emp-id').value;
+  const name = document.getElementById('work-item').value.trim().toLowerCase();
+  const match = workItemSuggestions(empId)[name];
+  const priceEl = document.getElementById('work-price');
+  if (match && (!priceEl.value || !workPriceManual)) {
+    priceEl.value = match.price;
+    workPriceManual = false;
+  }
+  updateWorkTotal();
+}
+
+function onWorkPriceInput() {
+  workPriceManual = true;
+  updateWorkTotal();
+}
+
+function updateWorkTotal() {
+  const price = parseFloat(document.getElementById('work-price').value) || 0;
+  const qty = parseFloat(document.getElementById('work-qty').value) || 0;
+  document.getElementById('work-total').innerHTML = `Jami: <strong>${formatMoney(price * qty)} so'm</strong>`;
+}
+
+function saveWork(e) {
+  e.preventDefault();
+  const emp = findEmp(document.getElementById('work-emp-id').value);
+  if (!emp) return;
+  const date = document.getElementById('work-date').value;
+  let item = document.getElementById('work-item').value.trim();
+  const price = parseFloat(document.getElementById('work-price').value);
+  const qty = parseFloat(document.getElementById('work-qty').value);
+
+  if (!date) return alert("Sanani tanlang!");
+  if (!item) return alert("Ish nomini kiriting!");
+  if (!price || price <= 0) return alert("Narxni kiriting!");
+  if (!qty || qty <= 0) return alert("Sonini kiriting!");
+  if (emp.lastSalaryDateStr && date <= emp.lastSalaryDateStr) {
+    return alert(`Bu xodimning oyligi ${formatDateStr(emp.lastSalaryDateStr)} sanagacha yopilgan. Undan keyingi sanani tanlang.`);
+  }
+
+  // "stol" va "Stol" bir xil ish bo'lishi uchun oldingi yozilishini ishlatamiz
+  const known = workItemSuggestions(emp.id)[item.toLowerCase()];
+  if (known) item = known.name;
+
+  const rec = { id: newId(), empId: emp.id, date, item, price, qty };
+  workRecords[String(rec.id)] = rec;
+  closeWorkModal();
+  renderAll();
+  saveWorkRecord(rec);
+  showToast(`Qo'shildi: ${item} × ${qty} = ${formatMoney(price * qty)} so'm`);
+}
+
+function deleteWork(id) {
+  const rec = workRecords[String(id)];
+  if (!rec) return;
+  const emp = findEmp(rec.empId);
+  if (emp && emp.lastSalaryDateStr && rec.date <= emp.lastSalaryDateStr) {
+    return alert("Bu ish uchun oylik allaqachon yopilgan, o'chirib bo'lmaydi.");
+  }
+  if (!confirm(`"${rec.item}" (${rec.qty} dona) yozuvi o'chirilsinmi?`)) return;
+  delete workRecords[String(id)];
+  renderAll();
+  removeWorkRecord(id);
+  showToast("O'chirildi");
 }
 
 // ---------------------------------------------------------------------------
@@ -378,16 +551,30 @@ function changeMonth(direction) {
   renderCalendarModal();
 }
 
+
 function renderCalendarModal() {
   const emp = findEmp(activeCalendarEmpId);
   if (!emp) return;
   const key = String(emp.id);
+  const isPiece = emp.type === 'piece';
 
-  document.getElementById('cal-emp-title').innerText = `${emp.name} — Davomati`;
+  document.getElementById('cal-emp-title').innerText = `${emp.name} — ${isPiece ? 'Ishlari' : 'Davomati'}`;
+  const legend = document.querySelector('#calendar-modal .calendar-legend');
+  if (legend) legend.style.display = isPiece ? 'none' : '';
 
-  const allEmpDates = Object.keys(attendanceRecords)
-    .filter(d => attendanceRecords[d] && attendanceRecords[d][key] !== undefined)
-    .sort();
+  // Ishbay uchun: sana -> shu kungi ishlar
+  const pieceByDate = {};
+  if (isPiece) {
+    getWorkList().filter(w => String(w.empId) === key).forEach(w => {
+      (pieceByDate[w.date] = pieceByDate[w.date] || []).push(w);
+    });
+  }
+
+  const allEmpDates = isPiece
+    ? Object.keys(pieceByDate).sort()
+    : Object.keys(attendanceRecords)
+        .filter(d => attendanceRecords[d] && attendanceRecords[d][key] !== undefined)
+        .sort();
   const firstWorkDate = allEmpDates.length > 0 ? formatDateStr(allEmpDates[0]) : "Belgilanmagan";
   const lastClosedDate = emp.lastSalaryDateStr ? formatDateStr(emp.lastSalaryDateStr) : "Hali yopilmagan";
   const calc = computeSalary(emp, getLocalDateStr());
@@ -397,24 +584,35 @@ function renderCalendarModal() {
   const mm = String(month + 1).padStart(2, '0');
 
   // Shu oydagi statistika
-  let mFull = 0, mHalf = 0, mAbsent = 0;
-  Object.keys(attendanceRecords).forEach(d => {
-    if (!d.startsWith(`${year}-${mm}-`)) return;
-    const v = attendanceRecords[d] ? attendanceRecords[d][key] : undefined;
-    if (v === 1) mFull++;
-    else if (v === 0.5) mHalf++;
-    else if (v === 0) mAbsent++;
-  });
+  let monthLine;
+  if (isPiece) {
+    let cnt = 0, sum = 0;
+    Object.keys(pieceByDate).forEach(d => {
+      if (!d.startsWith(`${year}-${mm}-`)) return;
+      pieceByDate[d].forEach(w => { cnt += Number(w.qty) || 0; sum += (Number(w.qty) || 0) * (Number(w.price) || 0); });
+    });
+    monthLine = `${cnt} dona, ${formatMoney(sum)} so'm`;
+  } else {
+    let mFull = 0, mHalf = 0, mAbsent = 0;
+    Object.keys(attendanceRecords).forEach(d => {
+      if (!d.startsWith(`${year}-${mm}-`)) return;
+      const v = attendanceRecords[d] ? attendanceRecords[d][key] : undefined;
+      if (v === 1) mFull++;
+      else if (v === 0.5) mHalf++;
+      else if (v === 0) mAbsent++;
+    });
+    monthLine = `${mFull} to'liq, ${mHalf} yarim, ${mAbsent} kelmagan`;
+  }
 
   document.getElementById('cal-summary-info').innerHTML = `
     <div><strong>Ilk qayd etilgan sana:</strong> ${firstWorkDate}</div>
     <div><strong>Oxirgi oylik yopilgan sana:</strong> ${lastClosedDate}</div>
-    <div><strong>Joriy davr ishlagan kunlari:</strong> ${calc.daysWorked} kun</div>
+    <div><strong>${isPiece ? 'Joriy davr bajarilgan ish' : 'Joriy davr ishlagan kunlari'}:</strong> ${isPiece ? `${calc.pieces} dona (${calc.daysWorked} kun)` : `${calc.daysWorked} kun`}</div>
     <div><strong>Joriy davr hisoblangan:</strong> ${formatMoney(calc.gross)} so'm,
       avans: <span style="color:var(--danger)">${formatMoney(calc.taken)} so'm</span></div>
-    <div><strong>${MONTH_NAMES[month]}:</strong> ${mFull} to'liq, ${mHalf} yarim, ${mAbsent} kelmagan</div>
+    <div><strong>${MONTH_NAMES[month]}:</strong> ${monthLine}</div>
     <div class="cal-summary-hint">
-      Yorqin kunlar — joriy davr; xira kunlar — yopilgan davr; <span class="cal-badge-demo">YOP</span> — yopilgan sana.
+      ${isPiece ? "Kunni bosib ish qo'shing. " : ''}Yorqin kunlar — joriy davr; xira kunlar — yopilgan davr; <span class="cal-badge-demo">YOP</span> — yopilgan sana.
     </div>
   `;
 
@@ -442,11 +640,22 @@ function renderCalendarModal() {
     cell.innerText = day;
 
     const dateStr = `${year}-${mm}-${String(day).padStart(2, '0')}`;
-    const status = (attendanceRecords[dateStr] || {})[key];
 
-    if (status === 1) cell.classList.add('status-green');
-    else if (status === 0.5) cell.classList.add('status-orange');
-    else if (status === 0) cell.classList.add('status-red');
+    if (isPiece) {
+      const works = pieceByDate[dateStr];
+      if (works && works.length) {
+        const sum = works.reduce((t, w) => t + (Number(w.qty) || 0) * (Number(w.price) || 0), 0);
+        cell.classList.add('status-green');
+        cell.title = `${formatMoney(sum)} so'm: ` + works.map(w => `${w.item} × ${w.qty}`).join(', ');
+      }
+      cell.classList.add('clickable');
+      cell.onclick = () => openWorkModal(emp.id, dateStr);
+    } else {
+      const status = (attendanceRecords[dateStr] || {})[key];
+      if (status === 1) cell.classList.add('status-green');
+      else if (status === 0.5) cell.classList.add('status-orange');
+      else if (status === 0) cell.classList.add('status-red');
+    }
 
     if (dateStr === todayStr) cell.classList.add('today');
 
@@ -532,7 +741,8 @@ function markAllPresent() {
   const selectedDate = getSelectedAttendanceDate();
   const filterEl = document.getElementById('attendance-filter-emp');
   const filterEmpId = filterEl ? filterEl.value : 'all';
-  const targetEmps = filterEmpId === 'all' ? employees : employees.filter(e => String(e.id) === String(filterEmpId));
+  const targetEmps = (filterEmpId === 'all' ? employees : employees.filter(e => String(e.id) === String(filterEmpId)))
+    .filter(e => e.type !== 'piece');
 
   if (!attendanceRecords[selectedDate]) attendanceRecords[selectedDate] = {};
   const dayMap = attendanceRecords[selectedDate];
@@ -559,7 +769,7 @@ function markAllPresent() {
 function populateMoneySelect() {
   fillEmployeeSelect(document.getElementById('money-emp-id'),
     '<option value="">-- Xodimni tanlang --</option>',
-    emp => `${emp.name} (${emp.type === 'daily' ? 'Kunlik' : 'Oylik'})`);
+    emp => `${emp.name} (${typeLabel(emp)})`);
   toggleMoneyInputs();
 }
 
@@ -601,7 +811,7 @@ function updateMoneyCalcPreview() {
     const c = computeSalary(emp, moneyDate);
     preview.style.display = 'block';
     preview.innerHTML = `
-      <p>Joriy davr: <strong>${c.daysWorked} kun</strong>, hisoblangan: <strong>${formatMoney(c.gross)} so'm</strong></p>
+      <p>Joriy davr: <strong>${c.isPiece ? `${c.pieces} dona` : `${c.daysWorked} kun`}</strong>, hisoblangan: <strong>${formatMoney(c.gross)} so'm</strong></p>
       <p>Hozirgacha olingan avans: <strong style="color:var(--danger);">${formatMoney(c.taken)} so'm</strong></p>
     `;
     return;
@@ -609,7 +819,13 @@ function updateMoneyCalcPreview() {
 
   const c = computeSalary(emp, moneyDate);
   let detailsText;
-  if (emp.type === 'daily') {
+  if (c.isPiece) {
+    const lines = c.itemLines.map(g => `${escapeHtml(g.name)}: ${g.qty} × ${formatMoney(g.price)} = <strong>${formatMoney(g.sum)}</strong>`);
+    detailsText = `Bajarilgan ishlar (${c.pieces} dona, ${c.daysWorked} kun):<br>
+                   ${lines.join('<br>') || "Ish kiritilmagan"}<br>
+                   Hisoblangan: ${formatMoney(c.gross)} so'm<br>
+                   Oldindan olingan summa (Avans): <strong style="color:var(--danger);">${formatMoney(c.taken)} so'm</strong>`;
+  } else if (emp.type === 'daily') {
     detailsText = `Tanlangan sanagacha ishlagan kunlari: <strong>${c.daysWorked} kun</strong><br>
                    Hisoblangan: ${formatMoney(c.gross)} so'm (${c.daysWorked} × ${formatMoney(c.rate)})<br>
                    Oldindan olingan summa (Avans): <strong style="color:var(--danger);">${formatMoney(c.taken)} so'm</strong>`;
@@ -671,7 +887,7 @@ function handleMoneySubmit(e) {
     }
     const c = computeSalary(emp, moneyDate);
     const msg = `${emp.name} oyligi ${formatDateStr(moneyDate)} sanagacha yopiladi.\n\n` +
-      `Ishlagan kun: ${c.daysWorked}\nHisoblangan: ${formatMoney(c.gross)} so'm\nAvans: ${formatMoney(c.taken)} so'm\n` +
+      `${c.isPiece ? 'Bajarilgan ish: ' + c.pieces + ' dona' : 'Ishlagan kun: ' + c.daysWorked}\nHisoblangan: ${formatMoney(c.gross)} so'm\nAvans: ${formatMoney(c.taken)} so'm\n` +
       `To'lanadi: ${formatMoney(c.payout)} so'm` +
       (c.carryDebt > 0 ? `\nKeyingi davrga qarz: ${formatMoney(c.carryDebt)} so'm` : '') +
       `\n\nTasdiqlaysizmi?`;
@@ -877,7 +1093,7 @@ function renderAll() {
       const sel = document.getElementById('money-emp-id');
       const prev = sel.value;
       fillEmployeeSelect(sel, '<option value="">-- Xodimni tanlang --</option>',
-        emp => `${emp.name} (${emp.type === 'daily' ? 'Kunlik' : 'Oylik'})`);
+        emp => `${emp.name} (${typeLabel(emp)})`);
       if (sel.value === prev) updateMoneyCalcPreview();
     }
     renderEmployees();
@@ -904,33 +1120,47 @@ function renderEmployees() {
   let html = '';
   let totalTaken = 0;
   let totalAccrued = 0;
-  const todayRecords = attendanceRecords[getLocalDateStr()] || {};
+  const today = getLocalDateStr();
+  const todayRecords = attendanceRecords[today] || {};
+  const worksToday = new Set(getWorkList().filter(w => w.date === today).map(w => String(w.empId)));
   let presentToday = 0;
 
   employees.forEach(emp => {
     if (!emp) return;
     const id = escapeHtml(emp.id);
-    const c = computeSalary(emp, getLocalDateStr());
+    const c = computeSalary(emp, today);
     totalTaken += c.taken;
     totalAccrued += c.gross;
-    const todayVal = todayRecords[String(emp.id)];
-    if (todayVal === 1 || todayVal === 0.5) presentToday++;
+    if (emp.type === 'piece') {
+      if (worksToday.has(String(emp.id))) presentToday++;
+    } else {
+      const todayVal = todayRecords[String(emp.id)];
+      if (todayVal === 1 || todayVal === 0.5) presentToday++;
+    }
 
     const closedInfo = emp.lastSalaryDateStr ? `<span>Yopilgan: ${formatDateStr(emp.lastSalaryDateStr)}</span>` : '';
+    const badge = emp.type === 'piece' ? 'ishbay' : `${formatMoney(c.rate)} so'm (${emp.type === 'monthly' ? 'oylik' : 'kunlik'})`;
+    const workedInfo = emp.type === 'piece'
+      ? `Ish: <strong>${c.pieces} dona</strong> (${c.daysWorked} kun)`
+      : `Ishlagan: <strong>${c.daysWorked} kun</strong>`;
+    const addWorkBtn = emp.type === 'piece'
+      ? `<button class="btn-sm primary" onclick="openWorkModal('${id}')"><i class="fa-solid fa-plus"></i> Ish qo'shish</button>`
+      : '';
 
     html += `
       <div class="employee-card" onclick="openEmployeeCalendar('${id}')">
         <div class="emp-top">
           <span class="emp-name">${escapeHtml(emp.name || 'Nomsiz xodim')}</span>
-          <span class="emp-rate-badge">${formatMoney(c.rate)} so'm (${emp.type === 'monthly' ? 'oylik' : 'kunlik'})</span>
+          <span class="emp-rate-badge">${badge}</span>
         </div>
         <div class="emp-details">
-          <span>Ishlagan: <strong>${c.daysWorked} kun</strong></span>
+          <span>${workedInfo}</span>
           <span>Hisoblangan: <strong>${formatMoney(c.gross)}</strong></span>
           <span>Avans: <strong class="text-danger">${formatMoney(c.taken)}</strong></span>
           ${closedInfo}
         </div>
         <div class="emp-actions" onclick="event.stopPropagation()">
+          ${addWorkBtn}
           <button class="btn-sm warning" onclick="openEmpModal('${id}')"><i class="fa-solid fa-pen"></i> Izmenit</button>
           <button class="btn-sm danger" onclick="deleteEmployee('${id}')"><i class="fa-solid fa-trash"></i> O'chirish</button>
         </div>
@@ -942,11 +1172,52 @@ function renderEmployees() {
   if (summary) {
     summary.innerHTML = `
       <div class="stat"><span>Xodimlar</span><strong>${employees.length}</strong></div>
-      <div class="stat"><span>Bugun keldi</span><strong>${presentToday}</strong></div>
+      <div class="stat"><span>Bugun ishda</span><strong>${presentToday}</strong></div>
       <div class="stat"><span>Hisoblangan</span><strong>${formatMoney(totalAccrued)}</strong></div>
       <div class="stat"><span>Avanslar</span><strong class="text-danger">${formatMoney(totalTaken)}</strong></div>
     `;
   }
+}
+
+// Ishbay xodim kartasi: tanlangan kundagi ishlar ro'yxati va "Ish qo'shish"
+function renderPieceAttendanceCard(emp, dateStr) {
+  const id = escapeHtml(emp.id);
+  const key = String(emp.id);
+  const works = getWorkList()
+    .filter(w => String(w.empId) === key && w.date === dateStr)
+    .sort((a, b) => Number(a.id) - Number(b.id));
+  const locked = emp.lastSalaryDateStr && dateStr <= emp.lastSalaryDateStr;
+  let total = 0;
+
+  const rows = works.map(w => {
+    const sum = (Number(w.qty) || 0) * (Number(w.price) || 0);
+    total += sum;
+    return `
+      <div class="work-row">
+        <div>
+          <strong>${escapeHtml(w.item)}</strong>
+          <div class="muted-sm">${escapeHtml(w.qty)} × ${formatMoney(w.price)} so'm</div>
+        </div>
+        <div class="work-row-right">
+          <strong>${formatMoney(sum)}</strong>
+          ${locked ? '' : `<button class="btn-sm danger" onclick="deleteWork('${escapeHtml(w.id)}')" aria-label="O'chirish"><i class="fa-solid fa-trash"></i></button>`}
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="employee-card${locked ? ' locked' : ''}">
+      <div class="emp-top">
+        <span class="emp-name">${escapeHtml(emp.name || 'Nomsiz')}</span>
+        <span class="muted-sm">${locked ? '<i class="fa-solid fa-lock"></i> Yopilgan' : 'Ishbay'}</span>
+      </div>
+      <p class="section-desc mb-8">
+        Sana: <strong>${formatDateStr(dateStr)}</strong> | Shu kungi ish: <strong>${formatMoney(total)} so'm</strong>
+      </p>
+      ${rows || '<p class="muted-sm mb-8">Bu kunga ish kiritilmagan</p>'}
+      ${locked ? '' : `<button class="btn primary-gradient" onclick="openWorkModal('${id}', '${escapeHtml(dateStr)}')"><i class="fa-solid fa-plus"></i> Ish qo'shish</button>`}
+    </div>
+  `;
 }
 
 function renderAttendance() {
@@ -971,6 +1242,10 @@ function renderAttendance() {
 
   filteredEmps.forEach(emp => {
     if (!emp) return;
+    if (emp.type === 'piece') {
+      html += renderPieceAttendanceCard(emp, selectedDate);
+      return;
+    }
     const id = escapeHtml(emp.id);
     const status = dateRecords[String(emp.id)];
     let statusText = 'Belgilanmagan';
@@ -1081,6 +1356,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   closeCalendarModal();
+  closeWorkModal();
   closeEmpModal();
   closeHistoryModal();
 });
